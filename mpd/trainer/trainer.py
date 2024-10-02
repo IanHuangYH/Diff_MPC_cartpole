@@ -320,7 +320,7 @@ def train(model=None, train_dataloader=None, epochs=None, lr=None, steps_til_sum
                                         epoch, train_steps_current, checkpoints_dir)
                     save_losses_to_disk(train_losses_l, validation_losses_l, checkpoints_dir)
                     print(f"\n-----------------------------------------")
-                    saved_main_folder = '/root/cartpoleDiff/cart_pole_diffusion_based_on_MPD/data_trained_models/2406400_training_data'
+                    saved_main_folder = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/data_trained_models/2406400_training_data'
                     middle_model_dir = os.path.join(saved_main_folder, str(train_steps_current))
                     # os.makedirs(middle_model_dir, exist_ok=True)
                     print(f'model dir path -- {middle_model_dir}')

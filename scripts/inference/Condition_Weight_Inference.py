@@ -24,13 +24,13 @@ allow_ops_in_compiled_graph()
 TRAINED_MODELS_DIR = '../../data_trained_models/'
 MODEL_FOLDER = '2406400_training_data'
 
-MODEL_PATH = '/root/cartpoleDiff/cart_pole_diffusion_based_on_MPD/data_trained_models/2406400_training_data/1000000'
+MODEL_PATH = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/data_trained_models/2406400_training_data/1000000'
 MODEL_ID = 1000000
 WEIGHT_GUIDANC = 0.01
 X0_IDX = 64 # range:[0,99]
 ITERATIONS = 50
 HORIZON = 8
-U_SAVED_PATH = '/root/cartpoleDiff/cartpole_inference_u_results'
+U_SAVED_PATH = '/MPC_DynamicSys/code/cartpole_inference_u_results'
 
 # cart pole dynamics
 def cart_pole_dynamics(x, u):

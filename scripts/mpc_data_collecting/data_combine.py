@@ -2,15 +2,15 @@ import torch
 import os
 
 # data saving folder
-folder_path = "/root/cartpoleDiff/cartpole_lmpc_data"
+folder_path = "/MPC_DynamicSys/code/cartpole_lmpc_data"
 
 # u loading 
-u_2400000 = torch.load("/root/cartpoleDiff/cartpole_lmpc_data/u-tensor_2400000-8-1.pt")
-u_6400 = torch.load("/root/cartpoleDiff/cartpole_lmpc_data/u-tensor_6400-8-1.pt") 
+u_2400000 = torch.load("/MPC_DynamicSys/code/cartpole_lmpc_data/u-tensor_2400000-8-1.pt")
+u_6400 = torch.load("/MPC_DynamicSys/code/cartpole_lmpc_data/u-tensor_6400-8-1.pt") 
 
 # x0 loading 
-x0_2400000 = torch.load("/root/cartpoleDiff/cartpole_lmpc_data/x0-tensor_2400000-4.pt") 
-x0_6400 = torch.load("/root/cartpoleDiff/cartpole_lmpc_data/x0-tensor_6400-4.pt") 
+x0_2400000 = torch.load("/MPC_DynamicSys/code/cartpole_lmpc_data/x0-tensor_2400000-4.pt") 
+x0_6400 = torch.load("/MPC_DynamicSys/code/cartpole_lmpc_data/x0-tensor_6400-4.pt") 
 
 # concatenate
 u_tensor_2406400 = torch.cat((u_2400000, u_6400), dim=0)

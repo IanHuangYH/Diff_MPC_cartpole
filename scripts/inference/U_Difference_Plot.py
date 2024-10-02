@@ -8,7 +8,7 @@ import torch
 
 
 DATASET = 2406400
-U_SAVED_PATH = '/root/cartpoleDiff/cartpole_inference_u_results'
+U_SAVED_PATH = '/MPC_DynamicSys/code/cartpole_inference_u_results'
 X0_IDX = 64
 
 ################# u results loading ###################

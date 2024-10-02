@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 ############### Seetings #######################
 
 # data saving folder
-folder_path = "/root/cartpoleDiff/cart_pole_diffusion_based_on_MPD/training_data_collecting"
+folder_path = "/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/training_data_collecting"
 
 # control steps
 CONTROL_STEPS = 30
