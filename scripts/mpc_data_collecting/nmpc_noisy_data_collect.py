@@ -31,6 +31,9 @@ NOISE_MEAN = 0
 NOISE_SD = 0.15
 CONTROLSTEP_X_NUMNOISY = CONTROL_STEPS*NUM_NOISY_DATA
 
+HOR = 64 # mpc prediction horizon
+
+
 # initial guess
 INITIAL_GUESS_NUM = 2
 initial_guess_x = [5, 0]
@@ -45,8 +48,10 @@ IDX_THETA = 2
 IDX_THETA_RED = 4
 
 # trainind data files name
-U_DATA_NAME = 'u_ini_5x20_noise_20_step_80_hor_64.pt' # 400000: training data amount, 8: horizon length, 1:channels --> 400000-8-1: tensor size for data trainig 
-X0_CONDITION_DATA_NAME = 'x0_ini_5x20_noise_20_step_80_hor_64.pt' # 400000-4: tensor size for conditioning data in training
+filename_idx = '_ini_'+str(NUM_INITIAL_X)+'x'+str(NUM_INIYIAL_THETA)+'_noise_'+str(NUM_NOISY_DATA)+'_step_'+str(CONTROL_STEPS)+'_hor_'+str(HOR)+'.pt'
+U_DATA_NAME = 'u' + filename_idx # 400000: training data amount, 8: horizon length, 1:channels --> 400000-8-1: tensor size for data trainig 
+X0_CONDITION_DATA_NAME = 'x0' + filename_idx # 400000-4: tensor size for conditioning data in training
+J_DATA_NAME = 'j'+ filename_idx
 
 np.random.seed(42)
 
@@ -142,7 +147,7 @@ P_REDUNDANT = 1000.0
 Q = np.diag([0.01, 0.01, 0, 0.01, Q_REDUNDANT])
 R = 0.001
 P = np.diag([0.01, 0.1, 0, 0.1, P_REDUNDANT])
-HOR = 64 # mpc prediction horizon
+
 
 TS = 0.01
 
@@ -166,10 +171,12 @@ u_track = np.zeros((1, CONTROL_STEPS))
 # data (x,u) collecting (saved in PT file)
 x_all_tensor = torch.zeros(INITIAL_GUESS_NUM*num_datagroup*(CONTROL_STEPS),NUM_STATE) # x0: 64000*5
 u_all_tensor = torch.zeros(INITIAL_GUESS_NUM*num_datagroup*(CONTROL_STEPS),HOR,1) # u: 64000*40*1
+J_all_tensor = torch.zeros(INITIAL_GUESS_NUM*num_datagroup*(CONTROL_STEPS)) # J: 64000*5
 
 # all noisy data
 x_all_noisy = torch.zeros(INITIAL_GUESS_NUM*num_datagroup*CONTROLSTEP_X_NUMNOISY, NUM_STATE) # 1280000*5
 u_all_noisy = torch.zeros(INITIAL_GUESS_NUM*num_datagroup*CONTROLSTEP_X_NUMNOISY, HOR, 1) # 1280000*40*1
+J_all_noisy = torch.zeros(INITIAL_GUESS_NUM*num_datagroup*CONTROLSTEP_X_NUMNOISY) # J: 64000*5
 
 noisey_x_array = np.zeros((NUM_NOISY_DATA, NUM_STATE))    # NUM_NOISY_DATA x NUM_STATE
 
@@ -216,6 +223,7 @@ for idx_ini_guess in range(0, INITIAL_GUESS_NUM):
 
             # save noisy u 
             u_all_noisy[idx_group_of_control_step*CONTROLSTEP_X_NUMNOISY + idx_control_step*NUM_NOISY_DATA : idx_group_of_control_step*CONTROLSTEP_X_NUMNOISY + idx_control_step*NUM_NOISY_DATA + NUM_NOISY_DATA,:,0] = torch.tensor(u_for_noisy_x)
+            J_all_noisy[idx_group_of_control_step*CONTROLSTEP_X_NUMNOISY + idx_control_step*NUM_NOISY_DATA : idx_group_of_control_step*CONTROLSTEP_X_NUMNOISY + idx_control_step*NUM_NOISY_DATA + NUM_NOISY_DATA] = torch.tensor(Cost_noise_sol)
 
             ################################################# normal mpc loop to update state #################################################
             
@@ -235,6 +243,7 @@ for idx_ini_guess in range(0, INITIAL_GUESS_NUM):
             u_reshape = U_sol.reshape(1,HOR)
             u_tensor = torch.tensor(u_reshape)
             u_all_tensor[idx_group_of_control_step*(CONTROL_STEPS)+idx_control_step,:,0] = u_tensor
+            J_all_tensor[idx_group_of_control_step*(CONTROL_STEPS)+idx_control_step] = torch.tensor(Cost_sol)
 
             ################################## generate noise state in next step  ##################################
             noisey_x_array = np.zeros((NUM_NOISY_DATA, NUM_STATE))
@@ -260,19 +269,24 @@ for idx_ini_guess in range(0, INITIAL_GUESS_NUM):
         #save data each group into folder seperately
         x_normal_tensor_single_Group_singel_guess = x_tensor
         u_normal_tensor_single_Group_singel_guess = u_all_tensor[idx_group_of_control_step*(CONTROL_STEPS):(idx_group_of_control_step+1)*(CONTROL_STEPS),:,:]
+        J_normal_tensor_single_Group_singel_guess = J_all_tensor[idx_group_of_control_step*(CONTROL_STEPS):(idx_group_of_control_step+1)*(CONTROL_STEPS)]
         
         x_noise_tensor_single_Group_singel_guess = x_all_noisy[idx_group_of_control_step*CONTROLSTEP_X_NUMNOISY:(idx_group_of_control_step+1)*CONTROLSTEP_X_NUMNOISY,:]
         u_noise_tensor_single_Group_singel_guess = u_all_noisy[idx_group_of_control_step*CONTROLSTEP_X_NUMNOISY:(idx_group_of_control_step+1)*CONTROLSTEP_X_NUMNOISY,:,:]
+        J_noise_tensor_single_Group_singel_guess = J_all_noisy[idx_group_of_control_step*CONTROLSTEP_X_NUMNOISY:(idx_group_of_control_step+1)*CONTROLSTEP_X_NUMNOISY]
         
         u_data_group = torch.cat((u_normal_tensor_single_Group_singel_guess, u_noise_tensor_single_Group_singel_guess), dim=0)
         x_data_group = torch.cat((x_normal_tensor_single_Group_singel_guess, x_noise_tensor_single_Group_singel_guess), dim=0)
+        J_data_group = torch.cat((J_normal_tensor_single_Group_singel_guess, J_noise_tensor_single_Group_singel_guess), dim=0)
         
         GroupFileName = 'guess_' + str(idx_ini_guess) + '_ini_' + str(turn) + '_'
         UGroupFileName = GroupFileName + U_DATA_NAME
         XGroupFileName = GroupFileName + X0_CONDITION_DATA_NAME
+        JGroupFileName = GroupFileName + J_DATA_NAME
         
         torch.save(u_data_group, os.path.join(SAVE_PATH, UGroupFileName))
         torch.save(x_data_group, os.path.join(SAVE_PATH, XGroupFileName))
+        torch.save(J_data_group, os.path.join(SAVE_PATH, JGroupFileName))
 
 
 # show the first saved u and x0
@@ -288,9 +302,13 @@ print(f'u_training_data -- {u_training_data.size()}')
 x0_conditioning_data = torch.cat((x_all_tensor, x_all_noisy), dim=0)
 print(f'x0_conditioning_data -- {x0_conditioning_data.size()}')
 
+# J combine j_normal + j_noisy
+J_training_data = torch.cat((J_all_tensor, J_all_noisy), dim=0)
+
 # data saving
 torch.save(u_training_data, os.path.join(SAVE_PATH, U_DATA_NAME))
 torch.save(x0_conditioning_data, os.path.join(SAVE_PATH, X0_CONDITION_DATA_NAME))
+torch.save(J_training_data, os.path.join(SAVE_PATH, J_DATA_NAME))
 
 end_time = time.time()
 
