@@ -10,19 +10,23 @@ import time
 # Attention: this py file can only set the initial range of position and theta, initial x_dot and theta_dot are always 0
 
 # data saving folder
-SAVE_PATH = "/MPC_DynamicSys/sharedVol/train_data/nmpc/test"
+SAVE_PATH = "/MPC_DynamicSys/sharedVol/train_data/nmpc/normal"
 
 # control steps
 CONTROL_STEPS = 80
 
 # data range
-NUM_INITIAL_X = 10
+NUM_INITIAL_X = 5
+# POSITION_INITIAL_RANGE = np.linspace(-0.5,0.5,NUM_INITIAL_X) 
+
+POSITION_INITIAL_RANGE = np.linspace(-0.5,-0.05555556,NUM_INITIAL_X) 
+
+
 NUM_INIYIAL_THETA = 20
-POSITION_INITIAL_RANGE = np.linspace(-0.5,0.5,NUM_INITIAL_X) 
 THETA_INITIAL_RANGE = np.linspace(3*np.pi/4,5*np.pi/4,NUM_INIYIAL_THETA) 
 
 # number of noisy data for each state
-NUM_NOISY_DATA = 1
+NUM_NOISY_DATA =20
 NOISE_MEAN = 0
 NOISE_SD = 0.15
 CONTROLSTEP_X_NUMNOISY = CONTROL_STEPS*NUM_NOISY_DATA
@@ -41,8 +45,8 @@ IDX_THETA = 2
 IDX_THETA_RED = 4
 
 # trainind data files name
-U_DATA_NAME = 'u_ini_10x20_noise_20_step_80_hor_40.pt' # 400000: training data amount, 8: horizon length, 1:channels --> 400000-8-1: tensor size for data trainig 
-X0_CONDITION_DATA_NAME = 'x0_ini_10x20_noise_20_step_80_hor_40.pt' # 400000-4: tensor size for conditioning data in training
+U_DATA_NAME = 'u_ini_5x20_noise_20_step_80_hor_64.pt' # 400000: training data amount, 8: horizon length, 1:channels --> 400000-8-1: tensor size for data trainig 
+X0_CONDITION_DATA_NAME = 'x0_ini_5x20_noise_20_step_80_hor_64.pt' # 400000-4: tensor size for conditioning data in training
 
 np.random.seed(42)
 
@@ -180,9 +184,9 @@ for idx_ini_guess in range(0, INITIAL_GUESS_NUM):
         u_ini_guess = initial_guess_u[idx_ini_guess]
         idx_group_of_control_step = idx_ini_guess*num_datagroup+turn
         #initial states
-        x_0 = round(rng0[turn,IDX_X_INI], ROUND_DIG)
-        theta_0 = round(rng0[turn,IDX_THETA_INI], ROUND_DIG)
-        theta_red_0 = round(ThetaToRedTheta(theta_0), ROUND_DIG)
+        x_0 = rng0[turn,IDX_X_INI]
+        theta_0 = rng0[turn,IDX_THETA_INI]
+        theta_red_0 = ThetaToRedTheta(theta_0)
         x0 = np.array([x_0, 0.0, theta_0, 0, theta_red_0])
         print(f'x0-- {x0}')
         x_track[:,0] = x0
@@ -191,8 +195,8 @@ for idx_ini_guess in range(0, INITIAL_GUESS_NUM):
         # noisy at x0
         for n in range(0,NUM_NOISY_DATA):
             noise = np.random.normal(NOISE_MEAN, NOISE_SD, size = (1,2))
-            noisy_state = np.round(x0 + [noise[0,0], 0, noise[0,1],0,0], ROUND_DIG)
-            noisy_state[IDX_THETA_RED] = round(ThetaToRedTheta(noisy_state[IDX_THETA]), ROUND_DIG)
+            noisy_state = x0 + [noise[0,0], 0, noise[0,1],0,0]
+            noisy_state[IDX_THETA_RED] = ThetaToRedTheta(noisy_state[IDX_THETA])
             noisey_x_array [n,:] = noisy_state 
 
         # save the initail noisy x group
@@ -212,7 +216,6 @@ for idx_ini_guess in range(0, INITIAL_GUESS_NUM):
 
             # save noisy u 
             u_all_noisy[idx_group_of_control_step*CONTROLSTEP_X_NUMNOISY + idx_control_step*NUM_NOISY_DATA : idx_group_of_control_step*CONTROLSTEP_X_NUMNOISY + idx_control_step*NUM_NOISY_DATA + NUM_NOISY_DATA,:,0] = torch.tensor(u_for_noisy_x)
-            print(f'u_start, u_end -- {turn*CONTROLSTEP_X_NUMNOISY + idx_control_step*NUM_NOISY_DATA, turn*CONTROLSTEP_X_NUMNOISY + idx_control_step*NUM_NOISY_DATA + NUM_NOISY_DATA}')
 
             ################################################# normal mpc loop to update state #################################################
             
@@ -220,7 +223,6 @@ for idx_ini_guess in range(0, INITIAL_GUESS_NUM):
             
             # select the first updated states as new starting state ans save in the x_track
             x0 = X_sol[:,1]
-            x0 = np.round(x0, ROUND_DIG)
            
             x_track[:,idx_control_step+1] = x0
             u_track[:,idx_control_step] = U_sol[0]
@@ -253,7 +255,24 @@ for idx_ini_guess in range(0, INITIAL_GUESS_NUM):
         x_save = x_track[:,:-1]
         x_reshape = np.transpose(x_save)
         x_tensor = torch.tensor(x_reshape)
-        x_all_tensor[idx_group_of_control_step*(CONTROL_STEPS):idx_group_of_control_step*(CONTROL_STEPS)+(CONTROL_STEPS),:] = x_tensor 
+        x_all_tensor[idx_group_of_control_step*(CONTROL_STEPS):idx_group_of_control_step*(CONTROL_STEPS)+(CONTROL_STEPS),:] = x_tensor
+        
+        #save data each group into folder seperately
+        x_normal_tensor_single_Group_singel_guess = x_tensor
+        u_normal_tensor_single_Group_singel_guess = u_all_tensor[idx_group_of_control_step*(CONTROL_STEPS):(idx_group_of_control_step+1)*(CONTROL_STEPS),:,:]
+        
+        x_noise_tensor_single_Group_singel_guess = x_all_noisy[idx_group_of_control_step*CONTROLSTEP_X_NUMNOISY:(idx_group_of_control_step+1)*CONTROLSTEP_X_NUMNOISY,:]
+        u_noise_tensor_single_Group_singel_guess = u_all_noisy[idx_group_of_control_step*CONTROLSTEP_X_NUMNOISY:(idx_group_of_control_step+1)*CONTROLSTEP_X_NUMNOISY,:,:]
+        
+        u_data_group = torch.cat((u_normal_tensor_single_Group_singel_guess, u_noise_tensor_single_Group_singel_guess), dim=0)
+        x_data_group = torch.cat((x_normal_tensor_single_Group_singel_guess, x_noise_tensor_single_Group_singel_guess), dim=0)
+        
+        GroupFileName = 'guess_' + str(idx_ini_guess) + '_ini_' + str(turn) + '_'
+        UGroupFileName = GroupFileName + U_DATA_NAME
+        XGroupFileName = GroupFileName + X0_CONDITION_DATA_NAME
+        
+        torch.save(u_data_group, os.path.join(SAVE_PATH, UGroupFileName))
+        torch.save(x_data_group, os.path.join(SAVE_PATH, XGroupFileName))
 
 
 # show the first saved u and x0
