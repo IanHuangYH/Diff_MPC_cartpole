@@ -195,7 +195,7 @@ for idx_ini_guess in range(0, INITIAL_GUESS_NUM):
         theta_0 = rng0[turn,IDX_THETA_INI]
         theta_red_0 = ThetaToRedTheta(theta_0)
         x0 = np.array([x_0, 0.0, theta_0, 0, theta_red_0])
-        print(f'x0-- {x0}')
+        #print(f'x0-- {x0}')
         x_track[:,0] = x0
 
         ################ generate noise data for initial state ##########################################################
@@ -236,9 +236,9 @@ for idx_ini_guess in range(0, INITIAL_GUESS_NUM):
             u_track[:,idx_control_step] = U_sol[0]
             print('-----------------------------------------normal result--------------------------------------------------------')
             print(f'initial_guess, turn, control_step -- {idx_ini_guess, turn, idx_control_step}')
-            print(f'u_sol-- {u_track[:,idx_control_step]}')
-            print(f'x0_new-- {x_track[:,idx_control_step+1]}')
-            print(f'cost-- {Cost_sol}')
+            # print(f'u_sol-- {u_track[:,idx_control_step]}')
+            # print(f'x0_new-- {x_track[:,idx_control_step+1]}')
+            # print(f'cost-- {Cost_sol}')
             # save control inputs in tensor
             u_reshape = U_sol.reshape(1,HOR)
             u_tensor = torch.tensor(u_reshape)
