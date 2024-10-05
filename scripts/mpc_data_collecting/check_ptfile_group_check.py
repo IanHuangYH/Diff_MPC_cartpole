@@ -5,9 +5,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 INITIAL_GUESS_NUM = 2
-INITIAL_STATE_GROUP = 1
+INITIAL_STATE_GROUP = 4
 NOISE_NUM = 2
-CONTROL_STEP = 4
+CONTROL_STEP = 20
 IDX_THETA = 2
 IDX_NORMAL_START_AFTER_INITIALGUESS_GROUP = INITIAL_STATE_GROUP * CONTROL_STEP
 
@@ -28,10 +28,10 @@ def access_tensor_element(tensor, indices):
 
 if __name__ == "__main__":
     # Specify the path to your .pt file
-    file_path = '/MPC_DynamicSys/sharedVol/train_data/nmpc/test2/'
-    file_name_x = 'x0_ini_10x20_noise_20_step_80_hor_64.pt'
-    file_name_u = 'u_ini_10x20_noise_20_step_80_hor_64.pt'
-    file_name_j = 'J_ini_10x20_noise_20_step_80_hor_64.pt'
+    file_path = '/home/seaclear/Desktop/ian/research/code/diffusion/data/diff_mpc_cartpole/nmpc/multi/'
+    file_name_x = 'x0_ini_2x2_noise_2_step_20_hor_64.pt'
+    file_name_u = 'u_ini_2x2_noise_2_step_20_hor_64.pt'
+    file_name_j = 'J_ini_2x2_noise_2_step_20_hor_64.pt'
     
     x_list = []
     u_list = []

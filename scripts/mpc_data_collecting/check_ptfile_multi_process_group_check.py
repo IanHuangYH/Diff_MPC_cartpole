@@ -40,7 +40,7 @@ def access_tensor_element(tensor, indices):
 
 if __name__ == "__main__":
     # Specify the path to your .pt file
-    file_path = '/home/seaclear/Desktop/ian/research/code/diffusion/data/diff_mpc_cartpole/nmpc/test/'
+    file_path = '/home/seaclear/Desktop/ian/research/code/diffusion/data/diff_mpc_cartpole/nmpc/multi/'
     file_name_x = X0_CONDITION_DATA_NAME
     file_name_u = U_DATA_NAME
     file_name_j = J_DATA_NAME

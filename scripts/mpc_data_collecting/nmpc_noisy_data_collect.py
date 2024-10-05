@@ -10,23 +10,23 @@ import time
 # Attention: this py file can only set the initial range of position and theta, initial x_dot and theta_dot are always 0
 
 # data saving folder
-SAVE_PATH = "/MPC_DynamicSys/sharedVol/train_data/nmpc/normal"
+SAVE_PATH = "/home/seaclear/Desktop/ian/research/code/diffusion/data/diff_mpc_cartpole/nmpc/test"
 
 # control steps
-CONTROL_STEPS = 80
+CONTROL_STEPS = 20
 
 # data range
-NUM_INITIAL_X = 5
+NUM_INITIAL_X = 2
 # POSITION_INITIAL_RANGE = np.linspace(-0.5,0.5,NUM_INITIAL_X) 
 
 POSITION_INITIAL_RANGE = np.linspace(-0.5,-0.05555556,NUM_INITIAL_X) 
 
 
-NUM_INIYIAL_THETA = 20
+NUM_INIYIAL_THETA = 2
 THETA_INITIAL_RANGE = np.linspace(3*np.pi/4,5*np.pi/4,NUM_INIYIAL_THETA) 
 
 # number of noisy data for each state
-NUM_NOISY_DATA =20
+NUM_NOISY_DATA =2
 NOISE_MEAN = 0
 NOISE_SD = 0.15
 CONTROLSTEP_X_NUMNOISY = CONTROL_STEPS*NUM_NOISY_DATA

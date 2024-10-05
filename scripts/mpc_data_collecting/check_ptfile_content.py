@@ -1,13 +1,12 @@
 import torch
 import matplotlib
-matplotlib.use('TkAgg')
 import matplotlib.pyplot as plt
 import numpy as np
 
 INITIAL_GUESS_NUM = 2
 INITIAL_STATE_GROUP = 4
 NOISE_NUM = 2
-CONTROL_STEP = 80
+CONTROL_STEP = 20
 IDX_THETA = 2
 IDX_NORMAL_START_AFTER_INITIALGUESS_GROUP = INITIAL_STATE_GROUP * CONTROL_STEP
 
@@ -26,9 +25,9 @@ def access_tensor_element(tensor, indices):
 
 if __name__ == "__main__":
     # Specify the path to your .pt file
-    file_path = '/MPC_DynamicSys/sharedVol/train_data/nmpc/1st/'
-    file_name_x = 'x0_ini_20x10_noise_20_step_80_hor_40.pt'
-    file_name_u = 'u_ini_20x10_noise_20_step_80_hor_40.pt'
+    file_path = '/home/seaclear/Desktop/ian/research/code/diffusion/data/diff_mpc_cartpole/nmpc/multi/'
+    file_name_x = 'x0_ini_2x2_noise_2_step_20_hor_64.pt'
+    file_name_u = 'u_ini_2x2_noise_2_step_20_hor_64.pt'
     complete_file_path_x = file_path + file_name_x
     complete_file_path_u = file_path + file_name_u
     
@@ -127,3 +126,4 @@ if __name__ == "__main__":
     
     plt.show()
     print("over-----------------------------------")
+    plt.savefig('output.png')

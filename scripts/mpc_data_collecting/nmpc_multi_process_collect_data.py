@@ -6,12 +6,13 @@ import os
 import matplotlib.pyplot as plt
 import time
 from multiprocessing import Pool, Manager, Array
+import multiprocessing
 
 ############### Seetings ######################
 # Attention: this py file can only set the initial range of position and theta, initial x_dot and theta_dot are always 0
 
 # data saving folder
-SAVE_PATH =  "/home/seaclear/Desktop/ian/research/code/diffusion/data/diff_mpc_cartpole/nmpc/test"
+SAVE_PATH =  "/home/seaclear/Desktop/ian/research/code/diffusion/data/diff_mpc_cartpole/nmpc/multi"
 
 # control steps
 CONTROL_STEPS = 20
@@ -194,34 +195,31 @@ def AssignDataTo1DBuffer( Buffer1D, Data: np.array, dim_data, Idx_start_basic, I
 
 def MPC_NormalData_Process(x0, x_ini_guess, u_ini_guess, idx_group_of_control_step, u_result_normal, j_result_normal, x_result_normal, idx_control_step=0) -> float:
     u_for_normal_x = np.zeros(HOR)
-    j_for_normal_x = 0
     
     X_sol, U_sol, Cost_sol = MPC_Solve(EulerForwardCartpole_virtual_Casadi, dynamic_update_virtual_Casadi, x0, x_ini_guess, u_ini_guess, NUM_STATE, HOR, Q, R, TS, opts_setting)
-    u_for_normal_x = U_sol.reshape(1,HOR)
-    j_for_normal_x = Cost_sol
+    u_for_normal_x = U_sol.reshape(HOR,1)
+    j_for_normal_x = np.array(Cost_sol)
     # save normal x,u,j data in 0th step 
     idx_0step_normal_data = idx_group_of_control_step*(CONTROL_STEPS) + idx_control_step
     
-    # AssignDataTo1DBuffer( u_result_normal, u_for_normal_x, HOR, idx_0step_normal_data, idx_0step_normal_data+1 )
-    # AssignDataTo1DBuffer( idx_0step_normal_data, x0, NUM_STATE, idx_0step_normal_data, idx_0step_normal_data+1 )
-    # AssignDataTo1DBuffer( j_result_normal, x0, 1, j_for_normal_x, idx_0step_normal_data+1 )
     
-    u_result_normal[idx_0step_normal_data,:,0] = torch.tensor(u_for_normal_x)
-    j_result_normal[idx_0step_normal_data] = torch.tensor(j_for_normal_x)
-    x_result_normal[idx_0step_normal_data,:] = torch.tensor(x0)
+    # shared memory with manager list
+    x_result_normal[idx_0step_normal_data] = x0.tolist()
+    u_result_normal[idx_0step_normal_data] = u_for_normal_x.tolist()
+    j_result_normal[idx_0step_normal_data] = j_for_normal_x.tolist()
     
     # print normal
     print('-----------------------------------------normal result--------------------------------------------------------')
     print(f'(idx_ini_guess*num_datagroup+turn, control step) -- {idx_group_of_control_step, idx_control_step}')
-    print(f'u_sol-- {U_sol[0]}')
-    print(f'x0_new-- {X_sol[:,0]}')
-    print(f'cost-- {Cost_sol}')
+    # print(f'u_sol-- {U_sol[0]}')
+    # print(f'x0_new-- {X_sol[:,0]}')
+    # print(f'cost-- {Cost_sol}')
     
     return U_sol[0]
 
 def MPC_NoiseData_Process( x0, x_ini_guess, u_ini_guess, idx_group_of_control_step, u_result_noise, j_result_noise, x_result_noise, idx_control_step=0, bAll = False):
     noisey_x = np.zeros((NUM_NOISY_DATA, NUM_STATE))
-    u_for_noisy_x = np.zeros((NUM_NOISY_DATA, HOR))
+    u_for_noisy_x = np.zeros((NUM_NOISY_DATA, HOR, 1))
     j_for_noisy_x = np.zeros((NUM_NOISY_DATA))
     for idx_noisy in range(0,NUM_NOISY_DATA):
         if (bAll == True): 
@@ -236,162 +234,173 @@ def MPC_NoiseData_Process( x0, x_ini_guess, u_ini_guess, idx_group_of_control_st
         X_noise_sol, U_noisy_sol, Cost_noise_sol = MPC_Solve(EulerForwardCartpole_virtual_Casadi, dynamic_update_virtual_Casadi, noisey_x[idx_noisy,:], x_ini_guess, u_ini_guess, NUM_STATE, HOR, Q, R, TS, opts_setting)
         
         # gey u, j by x
-        u_for_noisy_x[idx_noisy,:] = U_noisy_sol.reshape(1,HOR)
+        u_for_noisy_x[idx_noisy,:,:] = U_noisy_sol.reshape(1,HOR,1)
         j_for_noisy_x[idx_noisy] = Cost_noise_sol
 
 
     # save noise x,u,j data in 0th step 
     idx_start_0step_nosie_data = idx_group_of_control_step*CONTROLSTEP_X_NUMNOISY + idx_control_step*NUM_NOISY_DATA
     idx_end_0step_nosie_data = idx_start_0step_nosie_data + NUM_NOISY_DATA
-    u_result_noise[idx_start_0step_nosie_data : idx_end_0step_nosie_data,:,0] = torch.tensor(u_for_noisy_x)
-    j_result_noise[idx_start_0step_nosie_data : idx_end_0step_nosie_data] = torch.tensor(j_for_noisy_x)
-    x_result_noise[idx_start_0step_nosie_data : idx_end_0step_nosie_data,:] = torch.tensor(noisey_x)
-
+    
+    # shared memory with manager list
+    x_result_noise[idx_start_0step_nosie_data:idx_end_0step_nosie_data] = noisey_x.tolist()
+    u_result_noise[idx_start_0step_nosie_data:idx_end_0step_nosie_data] = u_for_noisy_x.tolist()
+    j_result_noise[idx_start_0step_nosie_data:idx_end_0step_nosie_data] = j_for_noisy_x.tolist()
 
 def RunMPCForSingle_IniState_IniGuess(x_ini_guess: float, u_ini_guess:float,idx_group_of_control_step:int,x0_state:np.array, 
                                       x_result_normal:torch.tensor, u_result_normal:torch.tensor, j_result_normal:torch.tensor,
-                                      x_result_noisy:torch.tensor, u_result_nosiy:torch.tensor, j_result_noisy:torch.tensor):
+                                      x_result_noisy:torch.tensor, u_result_noisy:torch.tensor, j_result_noisy:torch.tensor):
 
     ################ generate data for 0th step ##########################################################
-    # normal at x0
-    u0 = MPC_NormalData_Process(x0_state, x_ini_guess, u_ini_guess, idx_group_of_control_step, u_result_normal, j_result_normal, x_result_normal)
-    
-    # noisy at x0
-    MPC_NoiseData_Process(x0_state, x_ini_guess, u_ini_guess, idx_group_of_control_step, u_result_nosiy, j_result_noisy, x_result_noisy)
-       
-    ############################################## generate data for control step loop ##############################################
-    # main mpc loop
-    for idx_control_step in range(1, CONTROL_STEPS):
-        #system dynamic update x 
-        x0_next = EulerForwardCartpole_virtual(TS,x0_state,u0)
+    try:
+        # normal at x0
+        u0 = MPC_NormalData_Process(x0_state, x_ini_guess, u_ini_guess, idx_group_of_control_step, u_result_normal, j_result_normal, x_result_normal)
         
-        ################################################# normal mpc loop to update state #################################################
-        u0_cur = MPC_NormalData_Process(x0_next, x_ini_guess, u_ini_guess, idx_group_of_control_step, u_result_normal, j_result_normal, x_result_normal,idx_control_step)
+        # noisy at x0
+        MPC_NoiseData_Process(x0_state, x_ini_guess, u_ini_guess, idx_group_of_control_step, u_result_noisy, j_result_noisy, x_result_noisy)
+        
+        ############################################## generate data for control step loop ##############################################
+        # main mpc loop
+        for idx_control_step in range(1, CONTROL_STEPS):
+            #system dynamic update x 
+            x0_next = EulerForwardCartpole_virtual(TS,x0_state,u0)
+            
+            ################################################# normal mpc loop to update state #################################################
+            u0_cur = MPC_NormalData_Process(x0_next, x_ini_guess, u_ini_guess, idx_group_of_control_step, u_result_normal, j_result_normal, x_result_normal,idx_control_step)
 
-        ################################## noise  ##################################
-        MPC_NoiseData_Process(x0_next, x_ini_guess, u_ini_guess, idx_group_of_control_step, u_result_nosiy, j_result_noisy, x_result_noisy, idx_control_step, True)
-        
-        # update
-        x0_state = x0_next
-        u0 = u0_cur
-        
-        
-    #save data each group into folder seperately
-    #normal
-    idx_start_normal_singlegroup = idx_group_of_control_step*CONTROL_STEPS
-    idx_end_normal_singlegroup = idx_start_normal_singlegroup + CONTROL_STEPS
-    x_normal_tensor_single_Group_singel_guess = x_result_normal[idx_start_normal_singlegroup:idx_end_normal_singlegroup, :]
-    u_normal_tensor_single_Group_singel_guess = u_result_normal[idx_start_normal_singlegroup:idx_end_normal_singlegroup,:,:]
-    J_normal_tensor_single_Group_singel_guess = j_all_normal[idx_start_normal_singlegroup:idx_end_normal_singlegroup]
-    
-    #noisy
-    idx_start_noisy_singlegroup = idx_group_of_control_step*CONTROLSTEP_X_NUMNOISY
-    idx_end_noisy_singlegroup = idx_start_noisy_singlegroup + CONTROLSTEP_X_NUMNOISY
-    x_noise_tensor_single_Group_singel_guess = x_result_noisy[idx_start_noisy_singlegroup:idx_end_noisy_singlegroup,:]
-    u_noise_tensor_single_Group_singel_guess = u_result_nosiy[idx_start_noisy_singlegroup:idx_end_noisy_singlegroup,:,:]
-    J_noise_tensor_single_Group_singel_guess = j_result_noisy[idx_start_noisy_singlegroup:idx_end_noisy_singlegroup]
-    
-    # cat data
-    u_data_group = torch.cat((u_normal_tensor_single_Group_singel_guess, u_noise_tensor_single_Group_singel_guess), dim=0)
-    x_data_group = torch.cat((x_normal_tensor_single_Group_singel_guess, x_noise_tensor_single_Group_singel_guess), dim=0)
-    J_data_group = torch.cat((J_normal_tensor_single_Group_singel_guess, J_noise_tensor_single_Group_singel_guess), dim=0)
-    
-    GroupFileName = 'grp_'+str(idx_group_of_control_step)+'_'
-    UGroupFileName = GroupFileName + U_DATA_NAME
-    XGroupFileName = GroupFileName + X0_CONDITION_DATA_NAME
-    JGroupFileName = GroupFileName + J_DATA_NAME
-    
-    torch.save(u_data_group, os.path.join(SAVE_PATH, UGroupFileName))
-    torch.save(x_data_group, os.path.join(SAVE_PATH, XGroupFileName))
-    torch.save(J_data_group, os.path.join(SAVE_PATH, JGroupFileName))
+            ################################## noise  ##################################
+            MPC_NoiseData_Process(x0_next, x_ini_guess, u_ini_guess, idx_group_of_control_step, u_result_noisy, j_result_noisy, x_result_noisy, idx_control_step, True)
+            
+            # update
+            x0_state = x0_next
+            u0 = u0_cur
+            
+            
+        #save data each group into folder seperately
+        # spawn, manager list
+        # x_all_normal = torch.from_numpy(np.array(x_result_normal))
+        # u_all_normal = torch.from_numpy(np.array(u_result_normal))
+        # j_all_normal = torch.from_numpy(np.array(j_result_normal))
 
+        # x_all_noisy = torch.from_numpy(np.array(x_result_noisy))
+        # u_all_noisy = torch.from_numpy(np.array(u_result_noisy))
+        # j_all_noisy = torch.from_numpy(np.array(j_result_noisy))
+        
+        # #normal
+        # idx_start_normal_singlegroup = idx_group_of_control_step*CONTROL_STEPS
+        # idx_end_normal_singlegroup = idx_start_normal_singlegroup + CONTROL_STEPS
+        # x_normal_tensor_single_Group_singel_guess = x_all_normal[idx_start_normal_singlegroup:idx_end_normal_singlegroup, :]
+        # u_normal_tensor_single_Group_singel_guess = u_all_normal[idx_start_normal_singlegroup:idx_end_normal_singlegroup,:,:]
+        # J_normal_tensor_single_Group_singel_guess = j_all_normal[idx_start_normal_singlegroup:idx_end_normal_singlegroup]
+        
+        # #noisy
+        # idx_start_noisy_singlegroup = idx_group_of_control_step*CONTROLSTEP_X_NUMNOISY
+        # idx_end_noisy_singlegroup = idx_start_noisy_singlegroup + CONTROLSTEP_X_NUMNOISY
+        # x_noise_tensor_single_Group_singel_guess = x_all_noisy[idx_start_noisy_singlegroup:idx_end_noisy_singlegroup,:]
+        # u_noise_tensor_single_Group_singel_guess = u_all_noisy[idx_start_noisy_singlegroup:idx_end_noisy_singlegroup,:,:]
+        # J_noise_tensor_single_Group_singel_guess = j_all_noisy[idx_start_noisy_singlegroup:idx_end_noisy_singlegroup]
+        
+        # # cat data
+        # u_data_group = torch.cat((u_normal_tensor_single_Group_singel_guess, u_noise_tensor_single_Group_singel_guess), dim=0)
+        # x_data_group = torch.cat((x_normal_tensor_single_Group_singel_guess, x_noise_tensor_single_Group_singel_guess), dim=0)
+        # J_data_group = torch.cat((J_normal_tensor_single_Group_singel_guess, J_noise_tensor_single_Group_singel_guess), dim=0)
+        
+        # GroupFileName = 'grp_'+str(idx_group_of_control_step)+'_'
+        # UGroupFileName = GroupFileName + U_DATA_NAME
+        # XGroupFileName = GroupFileName + X0_CONDITION_DATA_NAME
+        # JGroupFileName = GroupFileName + J_DATA_NAME
+        
+        # torch.save(u_data_group, os.path.join(SAVE_PATH, UGroupFileName))
+        # torch.save(x_data_group, os.path.join(SAVE_PATH, XGroupFileName))
+        # torch.save(J_data_group, os.path.join(SAVE_PATH, JGroupFileName))
+    
+    except Exception as e:
+        print(f"Error: {e}")
 
 
 
 ######################################################################################################################
-
 # ##### data collecting loop #####
 # data (x,u) collecting (saved in PT file)
 SIZE_NORMAL_DATA = INITIAL_GUESS_NUM*num_datagroup*(CONTROL_STEPS)
-x_all_normal = torch.zeros(SIZE_NORMAL_DATA,NUM_STATE) # x0: 64000*5
-u_all_normal = torch.zeros(SIZE_NORMAL_DATA,HOR,1) # u: 64000*40*1
-j_all_normal = torch.zeros(SIZE_NORMAL_DATA) # J: 64000*5
-
+SIZE_NOISE_DATA = INITIAL_GUESS_NUM*num_datagroup*CONTROLSTEP_X_NUMNOISY
 x_normal_shape = (SIZE_NORMAL_DATA,NUM_STATE)
 u_normal_shape = (SIZE_NORMAL_DATA,HOR,1)
 j_normal_shape = (SIZE_NORMAL_DATA)
-
-x_normal_shared_memory = Array('d',np.prod(x_normal_shape))
-u_normal_shared_memory = Array('d',np.prod(u_normal_shape))
-j_normal_shared_memory = Array('d',np.prod(j_normal_shape))
-
-# all noisy data
-SIZE_NOISE_DATA = INITIAL_GUESS_NUM*num_datagroup*CONTROLSTEP_X_NUMNOISY
-x_all_noisy = torch.zeros(SIZE_NOISE_DATA, NUM_STATE) # 1280000*5
-u_all_noisy = torch.zeros(SIZE_NOISE_DATA, HOR, 1) # 1280000*40*1
-J_all_noisy = torch.zeros(SIZE_NOISE_DATA) # J: 64000*5
-
 x_noise_shape = (SIZE_NOISE_DATA,NUM_STATE)
 u_noise_shape = (SIZE_NOISE_DATA,HOR,1)
 j_noise_shape = (SIZE_NOISE_DATA)
 
-x_noise_shared_memory = Array('d',np.prod(x_noise_shape))
-u_noise_shared_memory = Array('d',np.prod(u_noise_shape))
-j_noise_shared_memory = Array('d',np.prod(j_noise_shape))
-
-MAX_CORE_CPU = 14
-
-start_time = time.time()
-
-# with Pool(process=MAX_CORE_CPU) as pool:
-#     argument_each_group = []
-    
-for idx_ini_guess in range(0, INITIAL_GUESS_NUM): 
-    for turn in range(0,num_datagroup):
-        # initial guess
-        x_ini_guess = initial_guess_x[idx_ini_guess]
-        u_ini_guess = initial_guess_u[idx_ini_guess]
-        idx_group_of_control_step = idx_ini_guess*num_datagroup+turn
+def main():
+    MAX_CORE_CPU = 14
+    start_time = time.time()
+    with Manager() as manager:
+        x_normal_shared_memory = manager.list([[0.0] * x_normal_shape[1]] * x_normal_shape[0])
+        u_normal_shared_memory = manager.list([[[0.0] for _ in range(u_normal_shape[1])] for _ in range(u_normal_shape[0])])
+        j_normal_shared_memory = manager.list([0.0] * j_normal_shape)
+        x_noise_shared_memory = manager.list([[0.0] * x_noise_shape[1]] * x_noise_shape[0])
+        u_noise_shared_memory = manager.list([[[0.0] for _ in range(u_noise_shape[1])] for _ in range(u_noise_shape[0])])
+        j_noise_shared_memory = manager.list([0.0] * j_noise_shape)
         
-        #initial states
-        x_0 = rng0[turn,IDX_X_INI]
-        theta_0 = rng0[turn,IDX_THETA_INI]
-        theta_red_0 = ThetaToRedTheta(theta_0)
-        x0 = np.array([x_0, 0.0, theta_0, 0, theta_red_0])
-        RunMPCForSingle_IniState_IniGuess(x_ini_guess, u_ini_guess, idx_group_of_control_step, x0, 
-                                          x_all_normal, u_all_normal, j_all_normal,
-                                          x_all_noisy, u_all_noisy, J_all_noisy)
+        argument_each_group = []
+        for idx_ini_guess in range(0, INITIAL_GUESS_NUM): 
+            for turn in range(0,num_datagroup):
+                # initial guess
+                x_ini_guess = initial_guess_x[idx_ini_guess]
+                u_ini_guess = initial_guess_u[idx_ini_guess]
+                idx_group_of_control_step = idx_ini_guess*num_datagroup+turn
+                
+                #initial states
+                x_0 = rng0[turn,IDX_X_INI]
+                theta_0 = rng0[turn,IDX_THETA_INI]
+                theta_red_0 = ThetaToRedTheta(theta_0)
+                x0 = np.array([x_0, 0.0, theta_0, 0, theta_red_0])
+                
+                argument_each_group.append((x_ini_guess, u_ini_guess, idx_group_of_control_step, x0, 
+                                            x_normal_shared_memory, u_normal_shared_memory, j_normal_shared_memory,
+                                            x_noise_shared_memory, u_noise_shared_memory, j_noise_shared_memory))
+   
+        with Pool(processes=MAX_CORE_CPU) as pool:
+            pool.starmap(RunMPCForSingle_IniState_IniGuess, argument_each_group)
+                
+        # shared memory with manager list
+        x_all_normal = torch.from_numpy(np.array(x_normal_shared_memory))
+        u_all_normal = torch.from_numpy(np.array(u_normal_shared_memory))
+        j_all_normal = torch.from_numpy(np.array(j_normal_shared_memory))
         
-#         argument_each_group.append(x_ini_guess, u_ini_guess, idx_group_of_control_step, x0, 
-#                                     x_all_normal, u_all_normal, j_all_normal,
-#                                     x_all_noisy, u_all_noisy, J_all_noisy)
-        
-# pool.starmap(RunMPCForSingle_IniState_IniGuess, argument_each_group)
-            
+        x_all_noisy = torch.from_numpy(np.array(x_noise_shared_memory))
+        u_all_noisy = torch.from_numpy(np.array(u_noise_shared_memory))
+        j_all_noisy = torch.from_numpy(np.array(j_noise_shared_memory))
+
+        # show the first saved u and x0
+        print(f'first_u -- {u_all_normal[0,:,0]}')
+        print(f'first_x0 -- {x_all_normal[0,:]}')
+
+        ##### data combing #####
+        # u combine u_normal + u_noisy
+        u_training_data = torch.cat((u_all_normal, u_all_noisy), dim=0)
+        print(f'u_training_data -- {u_training_data.size()}')
+
+        # x0 combine x_normal + x_noisy
+        x0_conditioning_data = torch.cat((x_all_normal, x_all_noisy), dim=0)
+        print(f'x0_conditioning_data -- {x0_conditioning_data.size()}')
+
+        # J combine j_normal + j_noisy
+        J_training_data = torch.cat((j_all_normal, j_all_noisy), dim=0)
+
+        # data saving
+        torch.save(u_training_data, os.path.join(SAVE_PATH, U_DATA_NAME))
+        torch.save(x0_conditioning_data, os.path.join(SAVE_PATH, X0_CONDITION_DATA_NAME))
+        torch.save(J_training_data, os.path.join(SAVE_PATH, J_DATA_NAME))
+
+    end_time = time.time()
+
+    duration = end_time - start_time
+    print(f"Time taken for generating data: {duration} seconds")
 
 
-# show the first saved u and x0
-print(f'first_u -- {u_all_normal[0,:,0]}')
-print(f'first_x0 -- {x_all_normal[0,:]}')
 
-##### data combing #####
-# u combine u_normal + u_noisy
-u_training_data = torch.cat((u_all_normal, u_all_noisy), dim=0)
-print(f'u_training_data -- {u_training_data.size()}')
 
-# x0 combine x_normal + x_noisy
-x0_conditioning_data = torch.cat((x_all_normal, x_all_noisy), dim=0)
-print(f'x0_conditioning_data -- {x0_conditioning_data.size()}')
-
-# J combine j_normal + j_noisy
-J_training_data = torch.cat((j_all_normal, J_all_noisy), dim=0)
-
-# data saving
-torch.save(u_training_data, os.path.join(SAVE_PATH, U_DATA_NAME))
-torch.save(x0_conditioning_data, os.path.join(SAVE_PATH, X0_CONDITION_DATA_NAME))
-torch.save(J_training_data, os.path.join(SAVE_PATH, J_DATA_NAME))
-
-end_time = time.time()
-
-duration = end_time - start_time
-print(f"Time taken for generating data: {duration} seconds")
+if __name__ == "__main__":
+    multiprocessing.set_start_method("spawn")
+    main()
