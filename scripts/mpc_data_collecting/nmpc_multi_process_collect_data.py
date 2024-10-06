@@ -12,20 +12,20 @@ import multiprocessing
 # Attention: this py file can only set the initial range of position and theta, initial x_dot and theta_dot are always 0
 
 # data saving folder
-SAVE_PATH =  "/home/seaclear/Desktop/ian/research/code/diffusion/data/diff_mpc_cartpole/nmpc/multi"
+SAVE_PATH =  "/MPC_DynamicSys/sharedVol/train_data/nmpc/multi_normal"
 
 # control steps
-CONTROL_STEPS = 20
+CONTROL_STEPS = 80
 
 # data range
-NUM_INITIAL_X = 2
+NUM_INITIAL_X = 10
 POSITION_INITIAL_RANGE = np.linspace(-0.5,0.5,NUM_INITIAL_X) 
 
-NUM_INIYIAL_THETA = 2
+NUM_INIYIAL_THETA = 20
 THETA_INITIAL_RANGE = np.linspace(3*np.pi/4,5*np.pi/4,NUM_INIYIAL_THETA) 
 
 # number of noisy data for each state
-NUM_NOISY_DATA =2
+NUM_NOISY_DATA =20
 NOISE_MEAN = 0
 NOISE_SD = 0.15
 CONTROLSTEP_X_NUMNOISY = CONTROL_STEPS*NUM_NOISY_DATA
@@ -332,7 +332,7 @@ u_noise_shape = (SIZE_NOISE_DATA,HOR,1)
 j_noise_shape = (SIZE_NOISE_DATA)
 
 def main():
-    MAX_CORE_CPU = 14
+    MAX_CORE_CPU = 30
     start_time = time.time()
     with Manager() as manager:
         x_normal_shared_memory = manager.list([[0.0] * x_normal_shape[1]] * x_normal_shape[0])
