@@ -140,10 +140,10 @@ for dataset_subdir, include_velocity, use_ema, variance_schedule, n_diffusion_st
         model_saving_address = MODEL_SAVED_PATH,
 
         # steps_til_ckpt=50000,
-        steps_til_ckpt=10000, # 10000
+        steps_til_ckpt=20000, # 10000
 
         # steps_til_summary=20000,
-        steps_til_summary=2000,
+        steps_til_summary=20000,
 
         **wandb_options,
         wandb_group=f'{dataset_subdir}-{include_velocity}-{use_ema}-{variance_schedule}-{n_diffusion_steps}-{predict_epsilon}-{unet_dim_mults_option}',

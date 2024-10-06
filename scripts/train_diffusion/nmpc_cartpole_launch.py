@@ -38,7 +38,8 @@ N_CORES = N_EXPS_IN_PARALLEL * 12
 MEMORY_SINGLE_JOB = 1200
 MEMORY_PER_CORE = N_EXPS_IN_PARALLEL * MEMORY_SINGLE_JOB // N_CORES
 PARTITION = 'gpu' if USE_CUDA else 'amd3,amd2,amd'
-GRES = 'gpu:0' if USE_CUDA else None
+GPU_IDX = 1
+GRES = 'gpu:'+str(GPU_IDX) if USE_CUDA else None
 CONDA_ENV = 'mpd'
 
 
@@ -139,6 +140,8 @@ for dataset_subdir, include_velocity, use_ema, variance_schedule, n_diffusion_st
         wandb_group=f'{dataset_subdir}-{include_velocity}-{use_ema}-{variance_schedule}-{n_diffusion_steps}-{predict_epsilon}-{unet_dim_mults_option}',
 
         debug=False,
+        
+        gpu_idx = GPU_IDX,
     )
 
 launcher.run(LOCAL, TEST)

@@ -52,7 +52,7 @@ def experiment(
 
     ########################################################################
     device: str = 'cuda',
-
+    gpu_idx: int = 0,
     debug: bool = True,
 
     ########################################################################
@@ -70,7 +70,9 @@ def experiment(
     fix_random_seed(seed)
 
     device = get_torch_device(device=device)
+    torch.cuda.set_device(gpu_idx)
     print(f'device --{device}')
+    print(f'GPU: --{torch.cuda.current_device()}')
     tensor_args = {'device': device, 'dtype': torch.float32}
 
     # Dataset
