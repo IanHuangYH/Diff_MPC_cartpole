@@ -10,7 +10,7 @@ import time
 # Attention: this py file can only set the initial range of position and theta, initial x_dot and theta_dot are always 0
 
 # data saving folder
-SAVE_PATH = "/home/seaclear/Desktop/ian/research/code/diffusion/data/diff_mpc_cartpole/nmpc/test"
+SAVE_PATH = "/MPC_DynamicSys/sharedVol/train_data/nmpc/test"
 
 # control steps
 CONTROL_STEPS = 20

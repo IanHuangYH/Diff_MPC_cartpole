@@ -24,27 +24,6 @@ def get_model(model_class=None, checkpoint_path=None,
 
     return model
 
-
-# @model_loader
-# def get_model(model_class=None, marginal_prob_sigma=None, device=None, checkpoint_path=None, submodules=None,
-#               **kwargs):
-#     if marginal_prob_sigma is not None:
-#         marginal_prob = MarginalProb(sigma=marginal_prob_sigma)
-#         kwargs['marginal_prob_get_std'] = marginal_prob.get_std_fn
-#
-#     if submodules is not None:
-#         for key, value in submodules.items():
-#             kwargs[key] = get_model(**value)
-#     Model = getattr(models, model_class)
-#     model = Model(**kwargs).to(device)
-#
-#     if checkpoint_path is not None:
-#         model.load_state_dict(torch.load(checkpoint_path))
-#     if "pretrained_dir" in kwargs and kwargs["pretrained_dir"] is not None:
-#         for param in model.parameters():
-#             param.requires_grad = False
-#     return model
-
 @pretrain_helper
 def get_pretrain_model(model_class=None, device=None, checkpoint_path=None, **kwargs):
     Model = getattr(models, model_class)
