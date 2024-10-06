@@ -77,9 +77,13 @@ class NMPC_Dataset(Dataset, abc.ABC):
 
         # x0 condition
         x0_condition =  torch.load(os.path.join(self.base_dir, X0_CONDITION_DATA_NAME),map_location=self.tensor_args['device'])
-        x0_condition = x0_condition.float()
-        print(f'condition_list_length -- {len(x0_condition)}')
-        self.fields[self.field_key_condition] = x0_condition
+        x_xdot = x0_condition[:,0:2]
+        theta_transform = x0_condition[:,4].unsqueeze(1)
+        theta_dot = x0_condition[:,3].unsqueeze(1)
+        x0_condition_reduce_theta = torch.cat((x_xdot, theta_transform, theta_dot), dim=1)
+        x0_condition_final = x0_condition_reduce_theta.float()
+        print(f'condition_list_dimension -- {len(x0_condition_final),len(x0_condition_final[0])}')
+        self.fields[self.field_key_condition] = x0_condition_final
         print(f'fields -- {len(self.fields)}')
 
     def normalize_all_data(self, *keys):

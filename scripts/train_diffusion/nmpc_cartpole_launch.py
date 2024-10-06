@@ -33,7 +33,7 @@ N_SEEDS = 1
 # N_EXPS_IN_PARALLEL = 4
 N_EXPS_IN_PARALLEL = 1
 
-N_CORES = N_EXPS_IN_PARALLEL * 4
+N_CORES = N_EXPS_IN_PARALLEL * 12
 # MEMORY_SINGLE_JOB = 12000
 MEMORY_SINGLE_JOB = 1200
 MEMORY_PER_CORE = N_EXPS_IN_PARALLEL * MEMORY_SINGLE_JOB // N_CORES
@@ -125,7 +125,7 @@ for dataset_subdir, include_velocity, use_ema, variance_schedule, n_diffusion_st
 
         batch_size=batch_size,
 
-        num_train_steps = TRAINING_DATA_AMOUNT*EPOCHES/BATCH_SIZE, # 246093.75
+        num_train_steps = TRAINING_DATA_AMOUNT*EPOCHES/BATCH_SIZE, 
 
         model_saving_address = MODEL_SAVED_PATH,
 
