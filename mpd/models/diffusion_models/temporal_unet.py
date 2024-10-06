@@ -220,7 +220,7 @@ class ConditionedTemporalUnet(nn.Module):
         self.conditioning_type = conditioning_type
 
         dims = [input_dim, *map(lambda m: unet_input_dim * m, dim_mults)]
-        in_out = list(zip(dims[:-1], dims[1:]))
+        in_out = list(zip(dims[:-1], dims[1:])) # transform to [(dims[0],dims[1]), (dims[1], dims[2]), ..., ()]
         print(f'[ models/temporal ] Channel dimensions: {in_out}')
 
         # Networks
