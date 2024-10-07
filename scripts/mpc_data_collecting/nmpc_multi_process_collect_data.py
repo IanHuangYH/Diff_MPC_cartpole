@@ -186,13 +186,6 @@ opts_setting = {'ipopt.max_iter':20000, 'ipopt.acceptable_tol':1e-8, 'ipopt.acce
 
 
 ###################multi-process######################################################################################
-def AssignDataTo1DBuffer( Buffer1D, Data: np.array, dim_data, Idx_start_basic, Idx_end_basic ):
-    Data_flat = Data.flattern()
-    startIdx = Idx_start_basic * dim_data
-    end_idx = Idx_end_basic * dim_data
-    Buffer1D[ startIdx:end_idx ] = Data_flat
-
-
 def MPC_NormalData_Process(x0, x_ini_guess, u_ini_guess, idx_group_of_control_step, u_result_normal, j_result_normal, x_result_normal, idx_control_step=0) -> float:
     u_for_normal_x = np.zeros(HOR)
     
