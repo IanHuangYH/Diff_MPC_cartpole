@@ -118,7 +118,7 @@ def dynamic_update_virtual_Casadi(x, u) -> ca.vertcat:
         -PI_UNDER_2 * (x[2]-np.pi) * x[3]   # theta_stat_dot
     )
     
-def EulerForwardCartpole_virtual(dt, x,u) -> ca.vertcat:
+def EulerForwardCartpole_virtual(dt, x,u) -> np.array:
     xdot = np.array([
         x[1],            # xdot 
         ( MPLP * -np.sin(x[2]) * x[3]**2 

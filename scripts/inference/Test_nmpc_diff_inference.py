@@ -32,6 +32,16 @@ PI_2 = 2*np.pi
 PI_UNDER_2 = 2/np.pi
 PI_UNDER_1 = 1/np.pi
 
+#mpc param
+Q_REDUNDANT = 1000.0
+P_REDUNDANT = 1000.0
+Q = np.diag([0.01, 0.01, 0, 0.01, Q_REDUNDANT])
+R = 0.001
+P = np.diag([0.01, 0.1, 0, 0.1, P_REDUNDANT])
+
+
+TS = 0.01
+
 
 def EulerForwardCartpole_virtual_Casadi(dynamic_update_virtual_Casadi, dt, x,u) -> ca.vertcat:
     xdot = dynamic_update_virtual_Casadi(x,u)
@@ -57,7 +67,7 @@ def dynamic_update_virtual_Casadi(x, u) -> ca.vertcat:
         -PI_UNDER_2 * (x[2]-np.pi) * x[3]   # theta_stat_dot
     )
     
-def EulerForwardCartpole_virtual(dt, x,u) -> ca.vertcat:
+def EulerForwardCartpole_virtual(dt, x,u) -> np.array:
     xdot = np.array([
         x[1],            # xdot 
         ( MPLP * -np.sin(x[2]) * x[3]**2 
@@ -78,7 +88,49 @@ def EulerForwardCartpole_virtual(dt, x,u) -> ca.vertcat:
 def ThetaToRedTheta(theta):
     return (theta-np.pi)**2/-np.pi + np.pi
 
+def calMPCCost(Q,R,P,u_hor:torch.tensor,x0:np.array, ModelUpdate_func, dt) -> float:
+    # u 1x64x1, x0: ,state
+    num_state = x0.shape[0]
+    num_u = u_hor.size(0)
+    num_hor = u_hor.size(1)
+    cost = 0
+    
+    # initial cost
+    for i in range(num_state):
+        cost = cost + Q[i][i] * x0[i] ** 2
+    
+    for i in range(num_u):
+        cost = cost + R[i][i] * u_hor[i][0][0] ** 2
+        
+    x_cur = x0
+    u_cur = u_hor[0][0][0]
+    IdxLastU = num_hor-1
+    # stage cost
+    for i in range(1,IdxLastU):
+        xnext = ModelUpdate_func(dt, x_cur, u_cur)
+        unext = u_hor[:][i][0]
+        for j in range(1,num_state):
+            cost = cost + Q[j][j] * xnext[j] ** 2
+        for j in range(num_u):
+            cost = cost + R[j][j] * unext ** 2
+    #final cost
+    
+    for i in range(num_state):
+        cost = cost + Q[i][i] * xnext[i] ** 2
+    for i in range(num_u):
+        cost = cost + R[i][i] * u_hor[i][IdxLastU][0] ** 2
+            
+            
+    return cost
 
+def PickBestDiffResult( candidate_list:list ) -> torch.tensor:
+    # candidate_list [[cost1, u_hor1],[cost2, u_hor2],...]
+    num_candidate = len(candidate_list)
+    best_idx = 0
+    for i in range(num_candidate-1):
+        if( candidate_list[i+1][0] < candidate_list[i][0] ):
+            best_idx = i+1
+    return candidate_list[best_idx][1]
 
 allow_ops_in_compiled_graph()
 
@@ -98,54 +150,11 @@ U_SAVED_PATH = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/model_perf
 X0_RANGE = np.array([-0.5, 0.5])
 THETA0_RANGE = np.array([3*np.pi/4, 5*np.pi/4])
 DATASET = 'NMPC_Dataset'
+NUM_STATE = 5
 
-# cart pole dynamics
-def cart_pole_dynamics(x, u):
-    A = np.array([
-    [0, 1, 0, 0],
-    [0, -0.1, 3, 0],
-    [0, 0, 0, 1],
-    [0, -0.5, 30, 0]
-    ])
+NUM_FIND_GLOBAL = 5
 
-    B = np.array([
-    [0],
-    [2],
-    [0],
-    [5]
-    ])
-
-    C = np.eye(4)
-
-    D = np.zeros((4,1))
-    
-    # state space equation
-    sys_continuous = control.ss(A, B, C, D)
-
-    # sampling time
-    Ts = 0.1
-
-    # convert to discrete time dynamics
-    sys_discrete = control.c2d(sys_continuous, Ts, method='zoh')
-
-    A_d = sys_discrete.A
-    B_d = sys_discrete.B
-    C_d = sys_discrete.C
-    D_d = sys_discrete.D
-
-    # StatesDATASET
-    x_dot = x[1]
-    theta = x[2]
-    theta_dot = x[3]
-
-    x_next = ca.vertcat(
-        A_d[0,0]*x_pos + A_d[0,1]*x_dot + A_d[0,2]*theta + A_d[0,3]*theta_dot + B_d[0,0]*u,
-        A_d[1,0]*x_pos + A_d[1,1]*x_dot + A_d[1,2]*theta + A_d[1,3]*theta_dot + B_d[1,0]*u,
-        A_d[2,0]*x_pos + A_d[2,1]*x_dot + A_d[2,2]*theta + A_d[2,3]*theta_dot + B_d[2,0]*u,
-        A_d[3,0]*x_pos + A_d[3,1]*x_dot + A_d[3,2]*theta + A_d[3,3]*theta_dot + B_d[3,0]*u,
-    )
-    return x_next
-
+TS = 0.01
 
 @single_experiment_yaml
 def experiment(
@@ -214,22 +223,32 @@ def experiment(
 
 
     #initial context
-    x0_test_red = np.array([[x_0_test , 0, theta_0_test, 0, thetared_0_test]])
+    x0_test_red = np.array([x_0_test , 0, theta_0_test, 0, thetared_0_test])
     x0_test_clean = np.array([[x_0_test , 0, thetared_0_test, 0]])
 
     ############################################################################
     # sampling loop
-    x_track = np.zeros((5, CONTROL_STEP+1))
-    u_track = np.zeros((1, CONTROL_STEP))
-    u_horizon_track = np.zeros((CONTROL_STEP, HORIZON))
+    x_track = np.zeros((NUM_STATE, CONTROL_STEP+1))
+    u_track = np.zeros((CONTROL_STEP))
+    u_horizon_track = np.zeros((HORIZON, CONTROL_STEP))
 
     x_track[:,0] = x0_test_red
+    
+    print('initial_state=(', x_track[:,0],')')
+    
+    FindGlobal_list = []
+    for i in range(5):
+        tensor = torch.randn(1, HORIZON, 1)  # Create a 1x64x1 tensor
+        FindGlobal_list.append([0, tensor])
+        
+    
 
     for i in range(0, CONTROL_STEP):
-        x0_test_red = torch.tensor(x0_test_red).to(device) # load data to cuda
+        
+        x0_test_clean = torch.tensor(x0_test_clean).to(device) # load data to cuda
 
         hard_conds = None
-        context = dataset.normalize_condition(x0_test_red)
+        context = dataset.normalize_condition(x0_test_clean)
 
 
         #########################################################################
@@ -265,47 +284,51 @@ def experiment(
 
         ########
         # Sample u with classifier-free-guidance (CFG) diffusion model
-        with TimerCUDA() as timer_model_sampling:
-            inputs_normalized_iters = model.run_CFG(
-                context, hard_conds, WEIGHT_GUIDANC,
-                n_samples=n_samples, horizon=n_support_points,
-                return_chain=True,
-                sample_fn=ddpm_cart_pole_sample_fn,
-                n_diffusion_steps_without_noise=n_diffusion_steps_without_noise,
-            )
-        print(f't_model_sampling: {timer_model_sampling.elapsed:.3f} sec')
-        # t_total = timer_model_sampling.elapsed
+        for j in range(NUM_FIND_GLOBAL):
+            with TimerCUDA() as timer_model_sampling:
+                u_normalized_iters = model.run_CFG(
+                    context, hard_conds, WEIGHT_GUIDANC,
+                    n_samples=n_samples, horizon=n_support_points,
+                    return_chain=True,
+                    sample_fn=ddpm_cart_pole_sample_fn,
+                    n_diffusion_steps_without_noise=n_diffusion_steps_without_noise,
+                )
+            print(f't_model_sampling: {timer_model_sampling.elapsed:.3f} sec')
 
-        ########
-        inputs_iters = dataset.unnormalize_states(inputs_normalized_iters)
-
-        inputs_final = inputs_iters[-1]
-        print(f'control_inputs -- {inputs_final}')
+            ########
+            u_iters = dataset.unnormalize_states(u_normalized_iters)
+            u_final_iter_candidate = u_iters[-1]
+            FindGlobal_list[j][0] = calMPCCost(Q,R,P,u_final_iter_candidate,x0_test_red, EulerForwardCartpole_virtual, TS)
+            FindGlobal_list[j][1] = u_final_iter_candidate
+        
+        u_best_cand = PickBestDiffResult(FindGlobal_list)
+        
+            
 
         print(f'\n--------------------------------------\n')
         
-        x0_test_red = x0_test_red.cpu() # copy cuda tensor at first to cpu
-        x0_array = np.squeeze(x0_test_red.numpy()) # matrix (1*4) to vector (4)
         horizon_inputs = np.zeros((1, HORIZON))
-        inputs_final = inputs_final.cpu()
-        for n in range(0,8):
-            horizon_inputs[0,n] = round(inputs_final[0,n,0].item(),4)
+        u_best_cand = u_best_cand.cpu()
+        horizon_inputs = u_best_cand.squeeze(-1).numpy()
         print(f'horizon_inputs -- {horizon_inputs}')
-        applied_input = round(inputs_final[0,0,0].item(),4) # retain 4 decimal places
+        applied_input = horizon_inputs[0][0] # retain 4 decimal places
         print(f'applied_input -- {applied_input}')
 
         # save the control input from diffusion sampling
-        u_track[:,i] = applied_input
-        u_horizon_track[i,:] = horizon_inputs
+        u_track[i] = applied_input
+        u_horizon_track[:,i] = horizon_inputs
 
         # update cart pole state
-        x_next = cart_pole_dynamics(x0_array, applied_input)
+        x_next = EulerForwardCartpole_virtual(TS, x0_test_red, applied_input)
         print(f'x_next-- {x_next}')
-        x0_test_red = np.array(x_next)
-        x0_test_red = x0_test_red.T # transpose matrix
-
+        
         # save the new state
-        x_track[:,i+1] = x0_test_red
+        x_track[:,i+1] = x_next
+        
+        # update
+        x0_test_red = x_next
+
+        
 
     # print all x and u 
     print(f'x_track-- {x_track.T}')
