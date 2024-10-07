@@ -13,7 +13,7 @@ from tqdm.autonotebook import tqdm
 from torch_robotics.torch_utils.torch_timer import TimerCUDA
 from torch_robotics.torch_utils.torch_utils import dict_to_device, DEFAULT_TENSOR_ARGS, to_numpy
 
-TEMP_MODEL_SAVE_PATH = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/data_trained_models/nmpc_1st_org_model'
+TEMP_MODEL_SAVE_PATH = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/data_trained_models/nmpc_batch_8192'
 
 
 def get_num_epochs(num_train_steps, batch_size, dataset_len):
@@ -173,6 +173,8 @@ def train(model=None, train_dataloader=None, epochs=None, lr=None, steps_til_sum
 
     # save models before training
     save_models_to_disk([(model, 'model'), (ema_model, 'ema_model')], 0, 0, checkpoints_dir)
+    
+    start_time = time.time()
 
     with tqdm(total=len(train_dataloader) * epochs, mininterval=1 if debug else 60) as pbar:
         train_losses_l = []
@@ -347,4 +349,6 @@ def train(model=None, train_dataloader=None, epochs=None, lr=None, steps_til_sum
                             epoch, train_steps_current, checkpoints_dir)
         save_losses_to_disk(train_losses_l, validation_losses_l, checkpoints_dir)
 
-        print(f'\n------- TRAINING FINISHED -------')
+        end_time = time.time()
+        duration = end_time - start_time
+        print(f"\nTime taken for training: {duration} seconds\n")
