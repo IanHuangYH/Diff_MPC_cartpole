@@ -32,6 +32,8 @@ CONTROLSTEP_X_NUMNOISY = CONTROL_STEPS*NUM_NOISY_DATA
 
 HOR = 64 # mpc prediction horizon
 
+SAVE_EACH_GROUP = 0
+
 
 # initial guess
 INITIAL_GUESS_NUM = 2
@@ -140,7 +142,7 @@ def ThetaToRedTheta(theta):
     return (theta-np.pi)**2/-np.pi + np.pi
 
 
-def MPC_Solve( system_update, system_dynamic, x0:np.array, initial_guess_x:float, initial_guess_u:float, num_state:int, horizon:int, Q_cost:np.array, R_cost:float, ts: float, opts_setting ):
+def MPC_Solve( system_update, system_dynamic, x0:np.array, initial_guess_x:float, initial_guess_u:float, num_state:int, horizon:int, Q_cost:np.array, R_cost:float, P_cost:np.array, ts: float, opts_setting ):
     # casadi_Opti
     optimizer_normal = ca.Opti()
     
@@ -161,7 +163,7 @@ def MPC_Solve( system_update, system_dynamic, x0:np.array, initial_guess_x:float
     cost += Q_cost[0,0]*X_pre[0, 0]**2 + Q_cost[1,1]*X_pre[1, 0]**2 + Q_cost[2,2]*X_pre[2, 0]**2 + Q_cost[3,3]*X_pre[3, 0]**2 + Q_cost[4,4]*X_pre[4, 0]**2
 
     # state cost
-    for k in range(0,HOR-1):
+    for k in range(0,horizon-1):
         x_next = system_update(system_dynamic,ts,X_pre[:, k],U_pre[:, k])
         optimizer_normal.subject_to(X_pre[:, k + 1] == x_next)
         cost += Q_cost[0,0]*X_pre[0, k+1]**2 + Q_cost[1,1]*X_pre[1, k+1]**2 + Q_cost[2,2]*X_pre[2, k+1]**2 + Q_cost[3,3]*X_pre[3, k+1]**2 + Q_cost[4,4]*X_pre[4, k+1]**2 + R_cost * U_pre[:, k]**2
@@ -169,7 +171,7 @@ def MPC_Solve( system_update, system_dynamic, x0:np.array, initial_guess_x:float
     # terminal cost
     x_terminal = system_update(system_dynamic,ts,X_pre[:, horizon-1],U_pre[:, horizon-1])
     optimizer_normal.subject_to(X_pre[:, horizon] == x_terminal)
-    cost += P[0,0]*X_pre[0, HOR]**2 + P[1,1]*X_pre[1, HOR]**2 + P[2,2]*X_pre[2, HOR]**2 + P[3,3]*X_pre[3, HOR]**2 + P[4,4]*X_pre[4, HOR]**2 + R_cost * U_pre[:, HOR-1]**2
+    cost += P_cost[0,0]*X_pre[0, horizon]**2 + P_cost[1,1]*X_pre[1, horizon]**2 + P_cost[2,2]*X_pre[2, horizon]**2 + P_cost[3,3]*X_pre[3, horizon]**2 + P_cost[4,4]*X_pre[4, horizon]**2 + R_cost * U_pre[:, horizon-1]**2
 
     optimizer_normal.minimize(cost)
     optimizer_normal.solver('ipopt',opts_setting)
@@ -189,7 +191,7 @@ opts_setting = {'ipopt.max_iter':20000, 'ipopt.acceptable_tol':1e-8, 'ipopt.acce
 def MPC_NormalData_Process(x0, x_ini_guess, u_ini_guess, idx_group_of_control_step, u_result_normal, j_result_normal, x_result_normal, idx_control_step=0) -> float:
     u_for_normal_x = np.zeros(HOR)
     
-    X_sol, U_sol, Cost_sol = MPC_Solve(EulerForwardCartpole_virtual_Casadi, dynamic_update_virtual_Casadi, x0, x_ini_guess, u_ini_guess, NUM_STATE, HOR, Q, R, TS, opts_setting)
+    X_sol, U_sol, Cost_sol = MPC_Solve(EulerForwardCartpole_virtual_Casadi, dynamic_update_virtual_Casadi, x0, x_ini_guess, u_ini_guess, NUM_STATE, HOR, Q, R, P, TS, opts_setting)
     u_for_normal_x = U_sol.reshape(HOR,1)
     j_for_normal_x = np.array(Cost_sol)
     # save normal x,u,j data in 0th step 
@@ -204,9 +206,6 @@ def MPC_NormalData_Process(x0, x_ini_guess, u_ini_guess, idx_group_of_control_st
     # print normal
     print('-----------------------------------------normal result--------------------------------------------------------')
     print(f'(idx_ini_guess*num_datagroup+turn, control step) -- {idx_group_of_control_step, idx_control_step}')
-    # print(f'u_sol-- {U_sol[0]}')
-    # print(f'x0_new-- {X_sol[:,0]}')
-    # print(f'cost-- {Cost_sol}')
     
     return U_sol[0]
 
@@ -224,7 +223,7 @@ def MPC_NoiseData_Process( x0, x_ini_guess, u_ini_guess, idx_group_of_control_st
         
         noisy_state[IDX_THETA_RED] = ThetaToRedTheta(noisy_state[IDX_THETA])
         noisey_x[idx_noisy,:] = noisy_state
-        X_noise_sol, U_noisy_sol, Cost_noise_sol = MPC_Solve(EulerForwardCartpole_virtual_Casadi, dynamic_update_virtual_Casadi, noisey_x[idx_noisy,:], x_ini_guess, u_ini_guess, NUM_STATE, HOR, Q, R, TS, opts_setting)
+        X_noise_sol, U_noisy_sol, Cost_noise_sol = MPC_Solve(EulerForwardCartpole_virtual_Casadi, dynamic_update_virtual_Casadi, noisey_x[idx_noisy,:], x_ini_guess, u_ini_guess, NUM_STATE, HOR, Q, R, P, TS, opts_setting)
         
         # gey u, j by x
         u_for_noisy_x[idx_noisy,:,:] = U_noisy_sol.reshape(1,HOR,1)
@@ -271,41 +270,42 @@ def RunMPCForSingle_IniState_IniGuess(x_ini_guess: float, u_ini_guess:float,idx_
             
         #save data each group into folder seperately
         # spawn, manager list
-        # x_all_normal = torch.from_numpy(np.array(x_result_normal))
-        # u_all_normal = torch.from_numpy(np.array(u_result_normal))
-        # j_all_normal = torch.from_numpy(np.array(j_result_normal))
+        if SAVE_EACH_GROUP == 1:
+            x_all_normal = torch.from_numpy(np.array(x_result_normal))
+            u_all_normal = torch.from_numpy(np.array(u_result_normal))
+            j_all_normal = torch.from_numpy(np.array(j_result_normal))
 
-        # x_all_noisy = torch.from_numpy(np.array(x_result_noisy))
-        # u_all_noisy = torch.from_numpy(np.array(u_result_noisy))
-        # j_all_noisy = torch.from_numpy(np.array(j_result_noisy))
-        
-        # #normal
-        # idx_start_normal_singlegroup = idx_group_of_control_step*CONTROL_STEPS
-        # idx_end_normal_singlegroup = idx_start_normal_singlegroup + CONTROL_STEPS
-        # x_normal_tensor_single_Group_singel_guess = x_all_normal[idx_start_normal_singlegroup:idx_end_normal_singlegroup, :]
-        # u_normal_tensor_single_Group_singel_guess = u_all_normal[idx_start_normal_singlegroup:idx_end_normal_singlegroup,:,:]
-        # J_normal_tensor_single_Group_singel_guess = j_all_normal[idx_start_normal_singlegroup:idx_end_normal_singlegroup]
-        
-        # #noisy
-        # idx_start_noisy_singlegroup = idx_group_of_control_step*CONTROLSTEP_X_NUMNOISY
-        # idx_end_noisy_singlegroup = idx_start_noisy_singlegroup + CONTROLSTEP_X_NUMNOISY
-        # x_noise_tensor_single_Group_singel_guess = x_all_noisy[idx_start_noisy_singlegroup:idx_end_noisy_singlegroup,:]
-        # u_noise_tensor_single_Group_singel_guess = u_all_noisy[idx_start_noisy_singlegroup:idx_end_noisy_singlegroup,:,:]
-        # J_noise_tensor_single_Group_singel_guess = j_all_noisy[idx_start_noisy_singlegroup:idx_end_noisy_singlegroup]
-        
-        # # cat data
-        # u_data_group = torch.cat((u_normal_tensor_single_Group_singel_guess, u_noise_tensor_single_Group_singel_guess), dim=0)
-        # x_data_group = torch.cat((x_normal_tensor_single_Group_singel_guess, x_noise_tensor_single_Group_singel_guess), dim=0)
-        # J_data_group = torch.cat((J_normal_tensor_single_Group_singel_guess, J_noise_tensor_single_Group_singel_guess), dim=0)
-        
-        # GroupFileName = 'grp_'+str(idx_group_of_control_step)+'_'
-        # UGroupFileName = GroupFileName + U_DATA_NAME
-        # XGroupFileName = GroupFileName + X0_CONDITION_DATA_NAME
-        # JGroupFileName = GroupFileName + J_DATA_NAME
-        
-        # torch.save(u_data_group, os.path.join(SAVE_PATH, UGroupFileName))
-        # torch.save(x_data_group, os.path.join(SAVE_PATH, XGroupFileName))
-        # torch.save(J_data_group, os.path.join(SAVE_PATH, JGroupFileName))
+            x_all_noisy = torch.from_numpy(np.array(x_result_noisy))
+            u_all_noisy = torch.from_numpy(np.array(u_result_noisy))
+            j_all_noisy = torch.from_numpy(np.array(j_result_noisy))
+            
+            #normal
+            idx_start_normal_singlegroup = idx_group_of_control_step*CONTROL_STEPS
+            idx_end_normal_singlegroup = idx_start_normal_singlegroup + CONTROL_STEPS
+            x_normal_tensor_single_Group_singel_guess = x_all_normal[idx_start_normal_singlegroup:idx_end_normal_singlegroup, :]
+            u_normal_tensor_single_Group_singel_guess = u_all_normal[idx_start_normal_singlegroup:idx_end_normal_singlegroup,:,:]
+            J_normal_tensor_single_Group_singel_guess = j_all_normal[idx_start_normal_singlegroup:idx_end_normal_singlegroup]
+            
+            #noisy
+            idx_start_noisy_singlegroup = idx_group_of_control_step*CONTROLSTEP_X_NUMNOISY
+            idx_end_noisy_singlegroup = idx_start_noisy_singlegroup + CONTROLSTEP_X_NUMNOISY
+            x_noise_tensor_single_Group_singel_guess = x_all_noisy[idx_start_noisy_singlegroup:idx_end_noisy_singlegroup,:]
+            u_noise_tensor_single_Group_singel_guess = u_all_noisy[idx_start_noisy_singlegroup:idx_end_noisy_singlegroup,:,:]
+            J_noise_tensor_single_Group_singel_guess = j_all_noisy[idx_start_noisy_singlegroup:idx_end_noisy_singlegroup]
+            
+            # cat data
+            u_data_group = torch.cat((u_normal_tensor_single_Group_singel_guess, u_noise_tensor_single_Group_singel_guess), dim=0)
+            x_data_group = torch.cat((x_normal_tensor_single_Group_singel_guess, x_noise_tensor_single_Group_singel_guess), dim=0)
+            J_data_group = torch.cat((J_normal_tensor_single_Group_singel_guess, J_noise_tensor_single_Group_singel_guess), dim=0)
+            
+            GroupFileName = 'grp_'+str(idx_group_of_control_step)+'_'
+            UGroupFileName = GroupFileName + U_DATA_NAME
+            XGroupFileName = GroupFileName + X0_CONDITION_DATA_NAME
+            JGroupFileName = GroupFileName + J_DATA_NAME
+            
+            torch.save(u_data_group, os.path.join(SAVE_PATH, UGroupFileName))
+            torch.save(x_data_group, os.path.join(SAVE_PATH, XGroupFileName))
+            torch.save(J_data_group, os.path.join(SAVE_PATH, JGroupFileName))
     
     except Exception as e:
         print(f"Error: {e}")
