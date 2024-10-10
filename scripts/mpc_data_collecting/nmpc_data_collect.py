@@ -25,6 +25,8 @@ POSITION_INITIAL_RANGE = np.linspace(-0.5,-0.05555556,NUM_INITIAL_X)
 NUM_INIYIAL_THETA = 2
 THETA_INITIAL_RANGE = np.linspace(3*np.pi/4,5*np.pi/4,NUM_INIYIAL_THETA) 
 
+DEBUG = 1
+
 # number of noisy data for each state
 NUM_NOISY_DATA =2
 NOISE_MEAN = 0
@@ -195,6 +197,13 @@ for idx_ini_guess in range(0, INITIAL_GUESS_NUM):
         theta_0 = rng0[turn,IDX_THETA_INI]
         theta_red_0 = ThetaToRedTheta(theta_0)
         x0 = np.array([x_0, 0.0, theta_0, 0, theta_red_0])
+        if (DEBUG == 1):
+            x_0 = 0.5
+            theta_0 = np.pi*3/4
+            theta_red_0 = ThetaToRedTheta(theta_0)
+            x0 = np.array([x_0, 0.0, theta_0, 0, theta_red_0])
+            x_ini_guess = 3
+            u_ini_guess = 4500
         #print(f'x0-- {x0}')
         x_track[:,0] = x0
 
