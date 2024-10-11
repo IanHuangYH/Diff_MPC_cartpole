@@ -59,6 +59,7 @@ def experiment(
     # MANDATORY
     seed: int = 0,
     results_dir: str = 'logs',
+    dataset_type: str= 'NMPC_UJ_Dataset',
 
     ########################################################################
     # WandB
@@ -77,7 +78,7 @@ def experiment(
 
     # Dataset
     train_subset, train_dataloader, val_subset, val_dataloader = get_dataset(
-        dataset_class='NMPC_Dataset',
+        dataset_class=dataset_type,
         include_velocity=include_velocity,
         dataset_subdir=dataset_subdir,
         batch_size=batch_size,

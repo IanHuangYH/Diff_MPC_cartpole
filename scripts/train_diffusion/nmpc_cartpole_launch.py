@@ -9,21 +9,22 @@ os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
 
 ########################################################################################################################
 
-####### Setting ######
-
+# modify
 # training data folder
-DATASET_SUBDIR = 'CartPole-NMPC' # the folder of the training data files (location: /root/cartpoleDiff/cart_pole_diffusion_based_on_MPD/training_data/CartPole-LMPC)
-
-# learning parameters
-BATCH_SIZE = 512
-LEARNING_RATE = 3e-3
-
+DATASET_SUBDIR = 'CartPole-NMPC'
+MODEL_SAVED_PATH = '/MPC_DynamicSys/sharedVol/model/nmpc/batch_4096_ujcat'
+LOSS_CLASS = 'GaussianDiffusionNMPC_UJ_Loss'
+BATCH_SIZE = 4096
 EPOCHES = 300 # times that the whole data should be trained
+GPU_IDX = 1
+DATASET_TYPE = 'NMPC_UJ_Dataset'
 
-MODEL_SAVED_PATH = '/MPC_DynamicSys/sharedVol/model/nmpc'
+
+
+
 
 # LAUNCHER
-
+LEARNING_RATE = 3e-3
 LOCAL = is_local()
 TEST = False
 USE_CUDA = True
@@ -38,7 +39,7 @@ N_CORES = N_EXPS_IN_PARALLEL * 12
 MEMORY_SINGLE_JOB = 1200
 MEMORY_PER_CORE = N_EXPS_IN_PARALLEL * MEMORY_SINGLE_JOB // N_CORES
 PARTITION = 'gpu' if USE_CUDA else 'amd3,amd2,amd'
-GPU_IDX = 1
+
 GRES = 'gpu:'+str(GPU_IDX) if USE_CUDA else None
 CONDA_ENV = 'mpd'
 
@@ -128,13 +129,13 @@ for dataset_subdir, include_velocity, use_ema, variance_schedule, n_diffusion_st
 
         num_train_steps = TRAINING_DATA_AMOUNT*EPOCHES/BATCH_SIZE, 
 
-        model_saving_address = MODEL_SAVED_PATH,
-
         # steps_til_ckpt=50000,
-        steps_til_ckpt=10000, # 10000
+        steps_til_ckpt=20000, # 10000
 
         # steps_til_summary=20000,
         steps_til_summary=2000,
+        
+        loss_class = LOSS_CLASS,
 
         **wandb_options,
         wandb_group=f'{dataset_subdir}-{include_velocity}-{use_ema}-{variance_schedule}-{n_diffusion_steps}-{predict_epsilon}-{unet_dim_mults_option}',
@@ -142,6 +143,10 @@ for dataset_subdir, include_velocity, use_ema, variance_schedule, n_diffusion_st
         debug=False,
         
         gpu_idx = GPU_IDX,
+        
+        results_dir = MODEL_SAVED_PATH,
+        
+        dataset_type = DATASET_TYPE
     )
 
 launcher.run(LOCAL, TEST)

@@ -27,3 +27,25 @@ class GaussianDiffusionCartPoleLoss:
         loss_dict = {'diffusion_loss': loss}
 
         return loss_dict, info
+    
+class GaussianDiffusionNMPC_UJ_Loss:
+
+    def __init__(self):
+        pass
+
+    @staticmethod
+    def loss_fn(diffusion_model, input_dict, dataset, step=None):
+        """
+        Loss function for training diffusion-based generative models.
+        """
+        uj_normalized = input_dict[f'{dataset.field_key_uj}_normalized']
+
+        context = input_dict[f'{dataset.field_key_condition}_normalized']
+
+        hard_conds = None
+
+        loss, info = diffusion_model.loss(uj_normalized, context, hard_conds)
+
+        loss_dict = {'diffusion_loss': loss}
+
+        return loss_dict, info

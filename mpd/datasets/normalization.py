@@ -63,7 +63,10 @@ def flatten(dataset):
     flattened = {}
     for key, xs in dataset.items():
         xs_new = xs
-        if xs.ndim == 2:
+        if xs.ndim == 1:
+            # cost
+            pass
+        elif xs.ndim == 2:
             # environments (e d)
             pass
         elif xs.ndim == 3:
@@ -91,6 +94,33 @@ class Normalizer:
         self.X = X
         self.mins = X.min(dim=0).values
         self.maxs = X.max(dim=0).values
+
+    def __repr__(self):
+        return (
+            f'''[ Normalizer ] dim: {self.mins.size}\n    -: '''
+            f'''{torch.round(self.mins, decimals=2)}\n    +: {torch.round(self.maxs, decimals=2)}\n'''
+        )
+
+    def __call__(self, x):
+        return self.normalize(x)
+
+    def normalize(self, *args, **kwargs):
+        raise NotImplementedError()
+
+    def unnormalize(self, *args, **kwargs):
+        raise NotImplementedError()
+    
+class LogNormalizer:
+    '''
+        parent class, subclass by defining the `normalize` and `unnormalize` methods
+    '''
+
+    def __init__(self, X):
+        self.X = X
+        self.mins = X.min(dim=0).values
+        self.maxs = X.max(dim=0).values
+        self.logmins = torch.log(self.mins)
+        self.logmaxs = torch.log(self.maxs)
 
     def __repr__(self):
         return (
@@ -193,3 +223,30 @@ class FixedLimitsNormalizer(LimitsNormalizer):
         super().__init__(*args, **kwargs)
         self.mins = torch.ones_like(self.mins) * min
         self.maxs = torch.ones_like(self.maxs) * max
+        
+class LogMinMaxNormalizer(LogNormalizer):
+    def normalize(self, x):
+        if(self.logmins == None or self.logmaxs == None):
+            print("cannot normalize because data cannot do log")
+            raise NotImplementedError
+        ## [ 0, 1 ]
+        x = (torch.log(x) - self.logmins) / (self.logmaxs - self.logmins)
+        ## [ -1, 1 ]
+        x = 2 * x - 1
+        return x
+
+    def unnormalize(self, x, eps=1e-4):
+        if(self.logmins == None or self.logmaxs == None):
+            print("cannot normalize because data cannot do log")
+            raise NotImplementedError
+        '''
+            x : [ -1, 1 ]
+        '''
+        if x.max() > 1 + eps or x.min() < -1 - eps:
+            # print(f'[ datasets/mujoco ] Warning: sample out of range | ({x.min():.4f}, {x.max():.4f})')
+            x = torch.clip(x, -1, 1)
+
+        ## [ -1, 1 ] --> [ 0, 1 ]
+        x = (x + 1) / 2.
+
+        return torch.exp(x * (self.logmaxs - self.logmins) + self.logmins)

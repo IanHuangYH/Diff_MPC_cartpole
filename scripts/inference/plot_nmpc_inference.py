@@ -2,7 +2,7 @@ import numpy as np
 import os
 import matplotlib.pyplot as plt
 import matplotlib
-matplotlib.use('TkAgg')
+matplotlib.use('Agg')
 
 
 
@@ -11,12 +11,13 @@ CONTROL_STEP = 80
 WEIGHT_GUIDANC = 0.01 # non-conditioning weight
 
 RESULT_SAVED_PATH = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/model_performance_saving/'
-RESULT_NAME = '1st_nmpc'
+RESULT_NAME = 'nmpc_batch_4096_ujcat'
 # RESULT_NAME = 'nmpc_batch_8192'
 RESULT_FOLDER = os.path.join(RESULT_SAVED_PATH, RESULT_NAME)
 
-model_list = [10000, 50000, 100000, 150000, 200000, 250000, 300000, 350000]
+# model_list = [10000, 50000, 100000, 150000, 200000, 250000, 300000, 350000]
 # model_list = [20000]
+model_list = [20000]
 num_modelread = len(model_list)
 
 # diffusion data prepare
@@ -141,4 +142,5 @@ for i in range(1,PLOT_NUM+1):
 figure_name = 'compare_checkpt_w_' + str(WEIGHT_GUIDANC) + '_'+ RESULT_NAME + '.png'
 figure_path = os.path.join(RESULT_FOLDER, figure_name)
 plt.savefig(figure_path)
+print("save")
 
