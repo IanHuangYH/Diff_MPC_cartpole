@@ -117,10 +117,13 @@ class LogNormalizer:
 
     def __init__(self, X):
         self.X = X
+        self.logX = torch.log(X)
         self.mins = X.min(dim=0).values
         self.maxs = X.max(dim=0).values
         self.logmins = torch.log(self.mins)
         self.logmaxs = torch.log(self.maxs)
+        self.log_mean = torch.mean(self.logX)
+        self.log_std = torch.std(self.logX)
 
     def __repr__(self):
         return (
@@ -250,3 +253,40 @@ class LogMinMaxNormalizer(LogNormalizer):
         x = (x + 1) / 2.
 
         return torch.exp(x * (self.logmaxs - self.logmins) + self.logmins)
+    
+class OnlyLogNormalizer(LogNormalizer):
+    def normalize(self, x):
+        if(self.logmins == None or self.logmaxs == None):
+            print("cannot normalize because data cannot do log")
+            raise NotImplementedError
+        x = torch.log(x)
+        return x
+
+    def unnormalize(self, x, eps=1e-4):
+        if(self.logmins == None or self.logmaxs == None):
+            print("cannot normalize because data cannot do log")
+            raise NotImplementedError
+        
+        ## [ -1, 1 ] --> [ 0, 1 ]
+        x = torch.exp(x)
+
+        return x
+    
+class LogZScoreNormalizer(LogNormalizer):
+    def normalize(self, x):
+        if(self.logmins == None or self.logmaxs == None):
+            print("cannot normalize because data cannot do log")
+            raise NotImplementedError
+        x = (torch.log(x) - self.log_mean)/(self.log_std)
+        return x
+
+    def unnormalize(self, x, eps=1e-4):
+        if(self.logmins == None or self.logmaxs == None):
+            print("cannot normalize because data cannot do log")
+            raise NotImplementedError
+        
+        ## [ -1, 1 ] --> [ 0, 1 ]
+        x = x*self.log_std + self.log_mean
+        x = torch.exp(x)
+
+        return x

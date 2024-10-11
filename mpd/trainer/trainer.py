@@ -13,7 +13,7 @@ from tqdm.autonotebook import tqdm
 from torch_robotics.torch_utils.torch_timer import TimerCUDA
 from torch_robotics.torch_utils.torch_utils import dict_to_device, DEFAULT_TENSOR_ARGS, to_numpy
 
-TEMP_MODEL_SAVE_PATH = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/data_trained_models/nmpc_batch_4096_ujcat'
+TEMP_MODEL_SAVE_PATH = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/data_trained_models/nmpc_batch_4096_uj_zscore'
 
 
 def get_num_epochs(num_train_steps, batch_size, dataset_len):

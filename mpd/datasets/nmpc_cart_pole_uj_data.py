@@ -9,16 +9,21 @@ from torch.utils.data import Dataset
 from mpd.datasets.normalization import DatasetNormalizer
 from mpd.utils.loading import load_params_from_yaml
 
+#modify
 INITILA_X = 10
 INITIAL_THETA = 20
 INITIAL_GUESS = 2
 CONTROL_STEP = 80
 NOISE_NUM = 20
 HOR = 64
+dataset_base_dir = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/training_data' 
+J_NORMALIZER = 'LogZScoreNormalizer'
+
+
 # training data amount
 TRAINING_DATA_AMOUNT = INITILA_X * INITIAL_THETA * INITIAL_GUESS * CONTROL_STEP * (NOISE_NUM+1)
 
-dataset_base_dir = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/training_data' 
+
 
 # Data Name Setting
 filename_idx = '_ini_'+str(INITILA_X)+'x'+str(INITIAL_THETA)+'_noise_'+str(NOISE_NUM)+'_step_'+str(CONTROL_STEP)+'_hor_'+str(HOR)+'.pt'
@@ -66,7 +71,7 @@ class NMPC_UJ_Dataset(Dataset, abc.ABC):
         # normalize cost
         self.cost_dic = {} # for initial the datanormalizer
         self.cost_dic[self.field_key_j] = self.fields[self.field_key_j]
-        self.normalizer_j = DatasetNormalizer(self.cost_dic, normalizer='LogMinMaxNormalizer')
+        self.normalizer_j = DatasetNormalizer(self.cost_dic, normalizer=J_NORMALIZER)
         
         # self.fields[self.field_key_condition] = self.condition
         self.normalizer_keys_xu = [self.field_key_u, self.field_key_condition]

@@ -38,13 +38,13 @@ class GaussianDiffusionNMPC_UJ_Loss:
         """
         Loss function for training diffusion-based generative models.
         """
-        uj_normalized = input_dict[f'{dataset.field_key_uj}_normalized']
+        uj_normalized_from_data = input_dict[f'{dataset.field_key_uj}_normalized']
 
         context = input_dict[f'{dataset.field_key_condition}_normalized']
 
         hard_conds = None
 
-        loss, info = diffusion_model.loss(uj_normalized, context, hard_conds)
+        loss, info = diffusion_model.loss(uj_normalized_from_data, context, hard_conds)
 
         loss_dict = {'diffusion_loss': loss}
 
