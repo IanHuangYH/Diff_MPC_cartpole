@@ -12,13 +12,13 @@ os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
 # modify
 # training data folder
 DATASET_SUBDIR = 'CartPole-NMPC'
-MODEL_SAVED_PATH = '/MPC_DynamicSys/sharedVol/model/nmpc/batch_4096_ujcat'
+MODEL_SAVED_PATH = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/data_trained_models/nmpc_batch_4096_ujcat'
 LOSS_CLASS = 'GaussianDiffusionNMPC_UJ_Loss'
 BATCH_SIZE = 4096
 EPOCHES = 300 # times that the whole data should be trained
-GPU_IDX = 1
+GPU_IDX = 0
 DATASET_TYPE = 'NMPC_UJ_Dataset'
-
+J_NORMALIZER = 'LogMinMaxNormalizer'
 
 
 
@@ -146,7 +146,11 @@ for dataset_subdir, include_velocity, use_ema, variance_schedule, n_diffusion_st
         
         results_dir = MODEL_SAVED_PATH,
         
-        dataset_type = DATASET_TYPE
+        dataset_type = DATASET_TYPE,
+        
+        j_normalizer_setting = J_NORMALIZER,
+        
+        temp_model_save_dir = MODEL_SAVED_PATH
     )
 
 launcher.run(LOCAL, TEST)

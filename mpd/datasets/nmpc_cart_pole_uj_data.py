@@ -17,7 +17,7 @@ CONTROL_STEP = 80
 NOISE_NUM = 20
 HOR = 64
 dataset_base_dir = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/training_data' 
-J_NORMALIZER = 'LogZScoreNormalizer'
+
 
 
 # training data amount
@@ -37,6 +37,7 @@ class NMPC_UJ_Dataset(Dataset, abc.ABC):
                  dataset_subdir=None,
                  include_velocity=False,
                  normalizer='LimitsNormalizer',
+                 j_normalizer='LimitsNormalizer',
                  use_extra_objects=False,
                  obstacle_cutoff_margin=None,
                  tensor_args=None,
@@ -71,7 +72,7 @@ class NMPC_UJ_Dataset(Dataset, abc.ABC):
         # normalize cost
         self.cost_dic = {} # for initial the datanormalizer
         self.cost_dic[self.field_key_j] = self.fields[self.field_key_j]
-        self.normalizer_j = DatasetNormalizer(self.cost_dic, normalizer=J_NORMALIZER)
+        self.normalizer_j = DatasetNormalizer(self.cost_dic, normalizer=j_normalizer)
         
         # self.fields[self.field_key_condition] = self.condition
         self.normalizer_keys_xu = [self.field_key_u, self.field_key_condition]

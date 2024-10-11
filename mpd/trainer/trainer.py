@@ -13,7 +13,7 @@ from tqdm.autonotebook import tqdm
 from torch_robotics.torch_utils.torch_timer import TimerCUDA
 from torch_robotics.torch_utils.torch_utils import dict_to_device, DEFAULT_TENSOR_ARGS, to_numpy
 
-TEMP_MODEL_SAVE_PATH = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/data_trained_models/nmpc_batch_4096_uj_zscore'
+
 
 
 def get_num_epochs(num_train_steps, batch_size, dataset_len):
@@ -132,6 +132,7 @@ def train(model=None, train_dataloader=None, epochs=None, lr=None, steps_til_sum
           debug=False,
           text_conditioner = None,
           tensor_args=DEFAULT_TENSOR_ARGS,
+          temp_result_dir='/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/data_trained_models/',
           **kwargs
           ):
 
@@ -323,7 +324,7 @@ def train(model=None, train_dataloader=None, epochs=None, lr=None, steps_til_sum
                                         epoch, train_steps_current, checkpoints_dir)
                     save_losses_to_disk(train_losses_l, validation_losses_l, checkpoints_dir)
                     print(f"\n-----------------------------------------")
-                    saved_main_folder = TEMP_MODEL_SAVE_PATH
+                    saved_main_folder = temp_result_dir
                     middle_model_dir = os.path.join(saved_main_folder, str(train_steps_current))
                     # os.makedirs(middle_model_dir, exist_ok=True)
                     print(f'model dir path -- {middle_model_dir}')

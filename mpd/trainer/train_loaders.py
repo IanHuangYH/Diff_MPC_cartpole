@@ -59,10 +59,11 @@ def get_dataset(dataset_class=None,
                 val_set_size=0.05,
                 results_dir=None,
                 save_indices=False,
+                j_normalizer='LimitsNormalizer',
                 **kwargs):
     DatasetClass = getattr(datasets, dataset_class)
     print('\n---------------Loading data')
-    full_dataset = DatasetClass(dataset_subdir=dataset_subdir, **kwargs)
+    full_dataset = DatasetClass(dataset_subdir=dataset_subdir, j_normalizer=j_normalizer, **kwargs)
     print(f'full_subset -- {full_dataset}')
     print(f'batch_size-- {batch_size}')
 

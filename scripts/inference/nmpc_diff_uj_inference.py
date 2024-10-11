@@ -25,9 +25,11 @@ import multiprocessing
 
 # modify
 DATASET = 'NMPC_UJ_Dataset'
+J_NORMALIZER = 'LogZScoreNormalizer'
 TRAINED_MODELS_DIR = 'trained_models' 
-MODEL_FOLDER = 'nmpc_batch_4096_ujcat'
+MODEL_FOLDER = 'nmpc_batch_4096_uj_zscore'
 RESULT_SAVED_PATH = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/model_performance_saving/'
+CONTROL_STEP = 60 # control loop (steps)
 
 
 # dynamic parameter
@@ -61,7 +63,7 @@ DEBUG = 1
 
 WEIGHT_GUIDANC = 0.01 # non-conditioning weight
 X0_IDX = 150 # range:[0,199] 20*20 data 
-CONTROL_STEP = 60 # control loop (steps)
+
 
 
 RESULT_NAME = MODEL_FOLDER
@@ -314,6 +316,7 @@ def experiment(
     # Load dataset
     train_subset, train_dataloader, val_subset, val_dataloader = get_dataset(
         dataset_class=DATASET,
+        j_normalizer=J_NORMALIZER,
         **args,
         tensor_args=tensor_args
     )
