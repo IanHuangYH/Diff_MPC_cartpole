@@ -1,13 +1,13 @@
 from torch_robotics.isaac_gym_envs.motion_planning_envs import PandaMotionPlanningIsaacGymEnv, MotionPlanningController
 
 import casadi as ca
-import control
+
 import numpy as np
 import os
 
 import matplotlib.pyplot as plt
 import matplotlib
-matplotlib.use('TkAgg')
+matplotlib.use('Agg')
 import torch
 from einops._torch_specific import allow_ops_in_compiled_graph  # requires einops>=0.6.1
 
@@ -22,6 +22,29 @@ from torch_robotics.torch_utils.torch_utils import get_torch_device, freeze_torc
 
 from multiprocessing import Pool
 import multiprocessing
+
+# modify
+DATASET = 'NMPC_UJ_Dataset'
+J_NORMALIZER = 'LogMinMaxNormalizer'
+TRAINED_MODELS_DIR = 'trained_models' 
+MODEL_FOLDER = 'nmpc_batch_4096_random112500_logminmax'
+RESULT_SAVED_PATH = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/model_performance_saving/'
+MODEL_SAVED_PATH = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/data_trained_models/'+MODEL_FOLDER
+DATA_LOAD_PATH = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/training_data/CartPole-NMPC/Random_112500'
+
+INITILA_X = 10
+INITIAL_THETA = 15
+CONTROL_STEP = 50
+NOISE_NUM = 15
+HOR = 64
+
+# Data Name Setting
+filename_idx = '_ini_'+str(INITILA_X)+'x'+str(INITIAL_THETA)+'_noise_'+str(NOISE_NUM)+'_step_'+str(CONTROL_STEP)+'_hor_'+str(HOR)+'.pt'
+X0_CONDITION_DATA_NAME = 'x0' + filename_idx
+U_DATA_FILENAME = 'u' + filename_idx
+J_DATA_FILENAME = 'j' + filename_idx
+
+
 
 # dynamic parameter
 M_CART = 2.0
@@ -41,27 +64,18 @@ PI_UNDER_1 = 1/np.pi
 TS = 0.01
 X0_RANGE = np.array([-0.5, 0.5])
 THETA0_RANGE = np.array([3*np.pi/4, 5*np.pi/4])
-DATASET = 'NMPC_Dataset'
 NUM_STATE = 5
 
 NUM_FIND_GLOBAL = 5
 
 DEBUG = 1
 
-# path
-TRAINED_MODELS_DIR = 'trained_models' 
-MODEL_FOLDER = 'nmpc_1st_org_model' # choose a main model folder saved in the trained_models (eg. 420000 is the number of total training data, this folder contains all trained models based on the 420000 training data)
-MODEL_FOLDER = 'nmpc_batch_8192'
-
+NUM_FIND_GLOBAL = 5
 
 WEIGHT_GUIDANC = 0.01 # non-conditioning weight
-X0_IDX = 150 # range:[0,199] 20*20 data 
-CONTROL_STEP = 80 # control loop (steps)
-HORIZON = 64 # mpc horizon
-RESULT_SAVED_PATH = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/model_performance_saving/'
 
-RESULT_NAME = MODEL_FOLDER
-RESULT_FOLDER = os.path.join(RESULT_SAVED_PATH, RESULT_NAME)
+
+RESULT_FOLDER = os.path.join(RESULT_SAVED_PATH, MODEL_FOLDER)
 
 
 
@@ -211,7 +225,7 @@ def runMPC(x0_test_red:np.array, result_dir, Q, R, P, initial_guess_x, initial_g
     x_cur = x0_test_red
     ############# control loop ##################
     for i in range(0, CONTROL_STEP):
-        X_sol, U_sol, Cost_sol = MPC_Solve(EulerForwardCartpole_virtual_Casadi, dynamic_update_virtual_Casadi, x_cur, initial_guess_x, initial_guess_u, NUM_STATE, HORIZON, Q, R, P, TS, opts_setting)
+        X_sol, U_sol, Cost_sol = MPC_Solve(EulerForwardCartpole_virtual_Casadi, dynamic_update_virtual_Casadi, x_cur, initial_guess_x, initial_guess_u, NUM_STATE, HOR, Q, R, P, TS, opts_setting)
         u_first = U_sol[0]
         x_next = EulerForwardCartpole_virtual(TS, x_cur, u_first)
 
@@ -310,6 +324,11 @@ def experiment(
     # Load dataset
     train_subset, train_dataloader, val_subset, val_dataloader = get_dataset(
         dataset_class=DATASET,
+        train_data_load_path=DATA_LOAD_PATH,
+        j_normalizer=J_NORMALIZER,
+        u_filename = U_DATA_FILENAME,
+        j_filename = J_DATA_FILENAME,
+        x0_filename = X0_CONDITION_DATA_NAME,
         **args,
         tensor_args=tensor_args
     )
@@ -331,7 +350,7 @@ def experiment(
     
     FindGlobal_list = []
     for i in range(5):
-        tensor = torch.randn(1, HORIZON, 1)  # Create a 1x64x1 tensor
+        tensor = torch.randn(1, HOR, 1)  # Create a 1x64x1 tensor
         FindGlobal_list.append([0, tensor])
         
     x_cur = x0_test_red
@@ -399,7 +418,7 @@ def experiment(
 
         print(f'\n--------------------------------------\n')
         
-        horizon_inputs = np.zeros((1, HORIZON))
+        horizon_inputs = np.zeros((1, HOR))
         u_best_cand = u_best_cand.cpu()
         horizon_inputs = u_best_cand.squeeze(-1).numpy()
         applied_input = horizon_inputs[0][0]
@@ -443,7 +462,6 @@ def experiment(
 
 def main():
     arg_list = []
-    model_list = [10000, 50000, 100000, 150000, 200000, 250000, 300000, 350000]
     model_list = [20000]
     num_modelread = len(model_list)
     
@@ -468,12 +486,12 @@ def main():
     idx_neg = 1
     
     # run MPC
-    runMPC(x0_test_red, RESULT_FOLDER, Q, R, P, initial_guess_x_grp[idx_pos], initial_guess_u_grp[idx_pos])
-    runMPC(x0_test_red, RESULT_FOLDER, Q, R, P, initial_guess_x_grp[idx_neg], initial_guess_u_grp[idx_neg])
+    # runMPC(x0_test_red, RESULT_FOLDER, Q, R, P, initial_guess_x_grp[idx_pos], initial_guess_u_grp[idx_pos])
+    # runMPC(x0_test_red, RESULT_FOLDER, Q, R, P, initial_guess_x_grp[idx_neg], initial_guess_u_grp[idx_neg])
     
     # prepare multi-task and run diffusion
     for i in range(num_modelread):
-        model_path = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/trained_models/'+str(MODEL_FOLDER)+'/'+ str(model_list[i])
+        model_path = os.path.join(MODEL_SAVED_PATH, str(model_list[i]))
         result_path = os.path.join(RESULT_FOLDER, str(model_list[i]))
         arg_list.append((experiment, {'model_dir': model_path, 'result_dir': result_path, 
                                       'x0_test_red':x0_test_red, 'x0_test_clean':x0_test_clean, 'Q':Q, 'R':R, 'P':P,

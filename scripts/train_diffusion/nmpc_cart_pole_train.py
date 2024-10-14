@@ -62,6 +62,16 @@ def experiment(
     dataset_type: str= 'NMPC_UJ_Dataset',
     j_normalizer_setting:str='LimitsNormalizer',
     temp_model_save_dir:str='/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/data_trained_models/',
+    
+    ########################################################################
+    # training data
+    train_data_load_path: str = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/training_data/CartPole-NMPC/',
+        
+    u_filename: str = None,
+    
+    j_filename: str = None,
+    
+    x0_filename: str = None,
 
     ########################################################################
     # WandB
@@ -87,6 +97,10 @@ def experiment(
         results_dir=results_dir,
         save_indices=True,
         j_normalizer=j_normalizer_setting,
+        train_data_load_path=train_data_load_path,
+        u_filename = u_filename,
+        j_filename = j_filename,
+        x0_filename = x0_filename,
         tensor_args=tensor_args
     )
 

@@ -5,21 +5,20 @@ import matplotlib
 matplotlib.use('Agg')
 
 
-
+# modify
 NUM_STATE = 5
-CONTROL_STEP = 80
+CONTROL_STEP = 50
 WEIGHT_GUIDANC = 0.01 # non-conditioning weight
 
 RESULT_SAVED_PATH = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/model_performance_saving/'
-RESULT_NAME = 'nmpc_batch_4096_ujcat'
-# RESULT_NAME = 'nmpc_batch_8192'
+RESULT_NAME = 'nmpc_batch_4096_random112500_logminmax'
 RESULT_FOLDER = os.path.join(RESULT_SAVED_PATH, RESULT_NAME)
-
 # model_list = [10000, 50000, 100000, 150000, 200000, 250000, 300000, 350000]
-# model_list = [20000]
-model_list = [20000]
-num_modelread = len(model_list)
+model_list = [40000]
 
+
+
+num_modelread = len(model_list)
 # diffusion data prepare
 diffusion_u_filename = 'u_diffusion.npy'
 diffusion_x_filename = 'x_diffusion.npy'

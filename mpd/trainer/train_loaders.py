@@ -60,10 +60,20 @@ def get_dataset(dataset_class=None,
                 results_dir=None,
                 save_indices=False,
                 j_normalizer='LimitsNormalizer',
+                train_data_load_path=None,
+                u_filename = None,
+                j_filename = None,
+                x0_filename = None,
                 **kwargs):
     DatasetClass = getattr(datasets, dataset_class)
     print('\n---------------Loading data')
-    full_dataset = DatasetClass(dataset_subdir=dataset_subdir, j_normalizer=j_normalizer, **kwargs)
+    full_dataset = DatasetClass(dataset_subdir=dataset_subdir, 
+                                j_normalizer=j_normalizer, 
+                                dataset_base_dir=train_data_load_path,
+                                u_filename = u_filename,
+                                j_filename = j_filename,
+                                x0_filename = x0_filename,
+                                **kwargs)
     print(f'full_subset -- {full_dataset}')
     print(f'batch_size-- {batch_size}')
 

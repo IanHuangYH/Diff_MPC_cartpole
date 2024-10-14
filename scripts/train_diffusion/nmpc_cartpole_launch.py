@@ -12,13 +12,27 @@ os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
 # modify
 # training data folder
 DATASET_SUBDIR = 'CartPole-NMPC'
-MODEL_SAVED_PATH = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/data_trained_models/nmpc_batch_4096_ujcat'
+MODEL_SAVED_PATH = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/data_trained_models/nmpc_batch_4096_random112500_logminmax_randominiguess_noisedata_decayguess1'
 LOSS_CLASS = 'GaussianDiffusionNMPC_UJ_Loss'
 BATCH_SIZE = 4096
 EPOCHES = 300 # times that the whole data should be trained
-GPU_IDX = 0
+GPU_IDX = 2
 DATASET_TYPE = 'NMPC_UJ_Dataset'
 J_NORMALIZER = 'LogMinMaxNormalizer'
+
+DATA_LOAD_PATH = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/training_data/CartPole-NMPC/Random_also_noisedata_decayguess1_112500'
+INITILA_X = 10
+INITIAL_THETA = 15
+CONTROL_STEP = 50
+NOISE_NUM = 15
+HOR = 64
+
+# Data Name Setting
+filename_idx = '_ini_'+str(INITILA_X)+'x'+str(INITIAL_THETA)+'_noise_'+str(NOISE_NUM)+'_step_'+str(CONTROL_STEP)+'_hor_'+str(HOR)+'.pt'
+X0_CONDITION_DATA_NAME = 'x0' + filename_idx
+U_DATA_FILENAME = 'u' + filename_idx
+J_DATA_FILENAME = 'j' + filename_idx
+
 
 
 
@@ -150,7 +164,15 @@ for dataset_subdir, include_velocity, use_ema, variance_schedule, n_diffusion_st
         
         j_normalizer_setting = J_NORMALIZER,
         
-        temp_model_save_dir = MODEL_SAVED_PATH
+        temp_model_save_dir = MODEL_SAVED_PATH,
+        
+        train_data_load_path = DATA_LOAD_PATH,
+        
+        u_filename = U_DATA_FILENAME,
+        
+        j_filename = J_DATA_FILENAME,
+        
+        x0_filename = X0_CONDITION_DATA_NAME
     )
 
 launcher.run(LOCAL, TEST)

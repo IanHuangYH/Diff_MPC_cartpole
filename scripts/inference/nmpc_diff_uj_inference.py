@@ -1,10 +1,8 @@
 from torch_robotics.isaac_gym_envs.motion_planning_envs import PandaMotionPlanningIsaacGymEnv, MotionPlanningController
 
 import casadi as ca
-import control
 import numpy as np
 import os
-
 import matplotlib.pyplot as plt
 import matplotlib
 matplotlib.use('Agg')
@@ -25,11 +23,29 @@ import multiprocessing
 
 # modify
 DATASET = 'NMPC_UJ_Dataset'
-J_NORMALIZER = 'LogZScoreNormalizer'
+J_NORMALIZER = 'LogMinMaxNormalizer'
 TRAINED_MODELS_DIR = 'trained_models' 
-MODEL_FOLDER = 'nmpc_batch_4096_uj_zscore'
+MODEL_FOLDER = 'nmpc_batch_4096_random112500_logminmax_randominiguess_noisedata'
 RESULT_SAVED_PATH = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/model_performance_saving/'
-CONTROL_STEP = 60 # control loop (steps)
+MODEL_SAVED_PATH = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/data_trained_models/'+MODEL_FOLDER
+DATA_LOAD_PATH = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/training_data/CartPole-NMPC/Random_also_noisedata_112500'
+
+B_PEDICT_J_BYMODEL = 0
+
+INITILA_X = 10
+INITIAL_THETA = 15
+CONTROL_STEP = 50
+NOISE_NUM = 15
+HOR = 64
+
+NUM_FIND_GLOBAL = 20
+# fix_random_seed(40)
+
+# Data Name Setting
+filename_idx = '_ini_'+str(INITILA_X)+'x'+str(INITIAL_THETA)+'_noise_'+str(NOISE_NUM)+'_step_'+str(CONTROL_STEP)+'_hor_'+str(HOR)+'.pt'
+X0_CONDITION_DATA_NAME = 'x0' + filename_idx
+U_DATA_FILENAME = 'u' + filename_idx
+J_DATA_FILENAME = 'j' + filename_idx
 
 
 # dynamic parameter
@@ -53,13 +69,7 @@ THETA0_RANGE = np.array([3*np.pi/4, 5*np.pi/4])
 
 NUM_STATE = 5
 
-NUM_FIND_GLOBAL = 5
-
 DEBUG = 1
-
-# path
-
-
 
 WEIGHT_GUIDANC = 0.01 # non-conditioning weight
 X0_IDX = 150 # range:[0,199] 20*20 data 
@@ -277,6 +287,14 @@ def experiment(
     model_dir: str,
     
     result_dir: str = RESULT_FOLDER,
+    
+    train_data_load_path: str = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/training_data/CartPole-NMPC/',
+    
+    u_filename: str = None,
+    
+    j_filename: str = None,
+    
+    x0_filename: str = None,
 
     planner_alg: str = 'mpd',
 
@@ -291,6 +309,7 @@ def experiment(
     # MANDATORY
     seed: int = 30,
     results_dir: str = 'logs',
+    load_model_dir: str = None
     ##############################################################
     # **kwargs
 ):
@@ -311,14 +330,24 @@ def experiment(
     
 
     args = load_params_from_yaml(os.path.join(model_dir, "args.yaml"))
+    
+    args.pop('j_filename', None)
+    args.pop('u_filename', None)
+    args.pop('x0_filename', None)
+    args.pop('train_data_load_path', None)
 
     #################################################################
     # Load dataset
     train_subset, train_dataloader, val_subset, val_dataloader = get_dataset(
         dataset_class=DATASET,
         j_normalizer=J_NORMALIZER,
+        train_data_load_path = train_data_load_path,
+        j_filename=j_filename,
+        u_filename = u_filename,
+        x0_filename = x0_filename,
         **args,
         tensor_args=tensor_args
+
     )
     dataset = train_subset.dataset
     print(f'dataset -- {len(dataset)}')
@@ -398,11 +427,22 @@ def experiment(
             u_iters = dataset.unnormalize_states(u_normalized_iters[:,:,0:Num_Hor_u,:])
             u_final_iter_candidate = u_iters[-1]
             u_final_iter_candidate = u_final_iter_candidate.cpu()
-            j_final_iter_candidate = u_normalized_iters[-1,0,-1,0].cpu()
-            FindGlobal_list[j][0] = j_final_iter_candidate
-            FindGlobal_list[j][1] = u_final_iter_candidate
+            
+            if B_PEDICT_J_BYMODEL == 1:
+                j_final_iter_candidate = u_normalized_iters[-1,0,-1,0].cpu()
+                FindGlobal_list[j][0] = j_final_iter_candidate
+                FindGlobal_list[j][1] = u_final_iter_candidate
+            else:
+                FindGlobal_list[j][0] = calMPCCost(Q,R,P,u_final_iter_candidate,x_cur, EulerForwardCartpole_virtual, TS)
+                FindGlobal_list[j][1] = u_final_iter_candidate
+                
         
         j_predict, u_best_cand = PickBestDiffResult(FindGlobal_list)
+        if B_PEDICT_J_BYMODEL == 1:
+            # calculate real cost
+            j_track_d[i] = calMPCCost(Q,R,P,u_best_cand,x_cur, EulerForwardCartpole_virtual,TS)
+        else:
+            j_track_d[i] = j_predict
         
             
 
@@ -412,12 +452,8 @@ def experiment(
         print("step:",i,'\n')
         print(f'applied_input -- {applied_input}')
         
-        # calculate real cost
-        j_best_cand = calMPCCost(Q,R,P,u_best_cand,x_cur, EulerForwardCartpole_virtual,TS)
-
         # save the control input from diffusion sampling
         u_track_d[i] = applied_input
-        j_track_d[i] = j_best_cand
 
         # update cart pole state
         x_next = EulerForwardCartpole_virtual(TS, x_cur, applied_input)
@@ -487,7 +523,9 @@ def main():
         result_path = os.path.join(RESULT_FOLDER, str(model_list[i]))
         arg_list.append((experiment, {'model_dir': model_path, 'result_dir': result_path, 
                                       'x0_test_red':x0_test_red, 'x0_test_clean':x0_test_clean, 'Q':Q, 'R':R, 'P':P,
-                                      'results_dir':'logs', 'seed': 30}))
+                                      'results_dir':'logs', 'seed': 30, 'load_model_dir':MODEL_SAVED_PATH, 
+                                      'train_data_load_path':DATA_LOAD_PATH,
+                                      'u_filename': U_DATA_FILENAME, 'j_filename': J_DATA_FILENAME, 'x0_filename': X0_CONDITION_DATA_NAME,}))
         
     with Pool(processes=MAX_CORE_CPU) as pool:
         pool.starmap(run_experiment, arg_list)

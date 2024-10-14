@@ -9,27 +9,6 @@ from torch.utils.data import Dataset
 from mpd.datasets.normalization import DatasetNormalizer
 from mpd.utils.loading import load_params_from_yaml
 
-#modify
-INITILA_X = 10
-INITIAL_THETA = 20
-INITIAL_GUESS = 2
-CONTROL_STEP = 80
-NOISE_NUM = 20
-HOR = 64
-dataset_base_dir = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/training_data' 
-
-
-
-# training data amount
-TRAINING_DATA_AMOUNT = INITILA_X * INITIAL_THETA * INITIAL_GUESS * CONTROL_STEP * (NOISE_NUM+1)
-
-
-
-# Data Name Setting
-filename_idx = '_ini_'+str(INITILA_X)+'x'+str(INITIAL_THETA)+'_noise_'+str(NOISE_NUM)+'_step_'+str(CONTROL_STEP)+'_hor_'+str(HOR)+'.pt'
-X0_CONDITION_DATA_NAME = 'x0' + filename_idx
-U_DATA_FILENAME = 'u' + filename_idx
-J_DATA_FILENAME = 'j' + filename_idx
 
 class NMPC_UJ_Dataset(Dataset, abc.ABC):
 
@@ -41,12 +20,16 @@ class NMPC_UJ_Dataset(Dataset, abc.ABC):
                  use_extra_objects=False,
                  obstacle_cutoff_margin=None,
                  tensor_args=None,
+                 dataset_base_dir = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/training_data/CartPole-NMPC/',
+                 u_filename=None,
+                 j_filename=None,
+                 x0_filename=None, 
                  **kwargs):
 
         self.tensor_args = tensor_args
 
         self.dataset_subdir = dataset_subdir
-        self.base_dir = os.path.join(dataset_base_dir, self.dataset_subdir)
+        self.base_dir = dataset_base_dir
 
         # -------------------------------- Load inputs data ---------------------------------
         self.field_key_condition = 'condition'
@@ -57,7 +40,7 @@ class NMPC_UJ_Dataset(Dataset, abc.ABC):
 
         # load data to self.fields
         self.include_velocity = include_velocity
-        self.load_inputs()
+        self.load_inputs(u_filename, j_filename, x0_filename)
 
         # dimensions
         b, h, d = self.dataset_shape = self.fields[self.field_key_u].shape
@@ -83,13 +66,13 @@ class NMPC_UJ_Dataset(Dataset, abc.ABC):
         del self.cost_dic
         print(self.fields[self.field_key_j])
 
-    def load_inputs(self):
+    def load_inputs(self, u_filename:str, j_filename:str, x0_filename:str):
         # load training inputs
         check = self.tensor_args['device']
         print(f'tensor_device -- {check}')
         # load u and j
-        u_load = torch.load(os.path.join(self.base_dir, U_DATA_FILENAME),map_location=self.tensor_args['device'])
-        j_load = torch.load(os.path.join(self.base_dir, J_DATA_FILENAME),map_location=self.tensor_args['device'])
+        u_load = torch.load(os.path.join(self.base_dir, u_filename),map_location=self.tensor_args['device'])
+        j_load = torch.load(os.path.join(self.base_dir, j_filename),map_location=self.tensor_args['device'])
         u_load = u_load.float()
         j_load = j_load.float()
         print(f'u_training -- {u_load.shape}')
@@ -100,7 +83,7 @@ class NMPC_UJ_Dataset(Dataset, abc.ABC):
         
 
         # x0 condition
-        x0_condition =  torch.load(os.path.join(self.base_dir, X0_CONDITION_DATA_NAME),map_location=self.tensor_args['device'])
+        x0_condition =  torch.load(os.path.join(self.base_dir, x0_filename),map_location=self.tensor_args['device'])
         x_xdot = x0_condition[:,0:2]
         theta_transform = x0_condition[:,4].unsqueeze(1)
         theta_dot = x0_condition[:,3].unsqueeze(1)

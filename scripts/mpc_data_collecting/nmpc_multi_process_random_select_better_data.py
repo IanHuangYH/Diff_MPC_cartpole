@@ -19,6 +19,7 @@ NUM_INIYIAL_THETA = 15
 NUM_NOISY_DATA =15
 B_RANDOMINIGUESS_FOR_NOISE = True
 INITIAL_GUESS_DECAY = 1
+FIND_GLOBAL_NUM = 5
 
 
 # Random range for initialguess
@@ -271,17 +272,13 @@ def MPC_NoiseData_Process( x0, x_ini_guess, u_ini_guess, idx_group_of_control_st
     j_result_noise[idx_start_0step_nosie_data:idx_end_0step_nosie_data] = j_for_noisy_x.tolist()
 
 
-def RunMPCForSingle_IniState_IniGuess(x_ini_guess: float, u_ini_guess:float,idx_group_of_control_step:int,x0_state:np.array, 
-                                      x_result_normal:torch.tensor, u_result_normal:torch.tensor, j_result_normal:torch.tensor,
-                                      x_result_noisy:torch.tensor, u_result_noisy:torch.tensor, j_result_noisy:torch.tensor):
+def RollOutMPCForSingleGroupANdIniGuess_Normal(x_ini_guess: float, u_ini_guess:float,idx_group_of_control_step:int,x0_state:np.array, 
+                                      x_result_normal:torch.tensor, u_result_normal:torch.tensor, j_result_normal:torch.tensor):
 
     ################ generate data for 0th step ##########################################################
     try:
         # normal at x0
         u0, u_sol, x_sol = MPC_NormalData_Process(x0_state, x_ini_guess, u_ini_guess, idx_group_of_control_step, u_result_normal, j_result_normal, x_result_normal)
-        
-        # noisy at x0
-        MPC_NoiseData_Process(x0_state, x_ini_guess, u_ini_guess, idx_group_of_control_step, u_result_noisy, j_result_noisy, x_result_noisy, u0)
         
         # update initial guess
         u_ini_guess = np.concatenate((u_sol[1:], u_sol[-1].reshape(1)), axis=0)
@@ -293,60 +290,13 @@ def RunMPCForSingle_IniState_IniGuess(x_ini_guess: float, u_ini_guess:float,idx_
             #system dynamic update x 
             x0_next = EulerForwardCartpole_virtual(TS,x0_state,u0)
             
-            
             ################################################# normal mpc loop to update state #################################################
             u0, u_sol, x_sol = MPC_NormalData_Process(x0_next, x_ini_guess, u_ini_guess, idx_group_of_control_step, u_result_normal, j_result_normal, x_result_normal,idx_control_step)
-
-            ################################## noise  ##################################
-            MPC_NoiseData_Process(x0_next, x_ini_guess, u_ini_guess, idx_group_of_control_step, u_result_noisy, j_result_noisy, x_result_noisy, u0, idx_control_step, True)
             
             # update
             x0_state = x0_next
-            
-            
             u_ini_guess = np.concatenate((u_sol[1:], u_sol[-1].reshape(1)), axis=0)
             x_ini_guess = np.concatenate((x_sol[:,1:], x_sol[:,-1].reshape(NUM_STATE,1)), axis=1)
-            
-            
-            
-        #save data each group into folder seperately
-        # spawn, manager list
-        if SAVE_EACH_GROUP == 1:
-            x_all_normal = torch.from_numpy(np.array(x_result_normal))
-            u_all_normal = torch.from_numpy(np.array(u_result_normal))
-            j_all_normal = torch.from_numpy(np.array(j_result_normal))
-
-            x_all_noisy = torch.from_numpy(np.array(x_result_noisy))
-            u_all_noisy = torch.from_numpy(np.array(u_result_noisy))
-            j_all_noisy = torch.from_numpy(np.array(j_result_noisy))
-            
-            #normal
-            idx_start_normal_singlegroup = idx_group_of_control_step*CONTROL_STEPS
-            idx_end_normal_singlegroup = idx_start_normal_singlegroup + CONTROL_STEPS
-            x_normal_tensor_single_Group_singel_guess = x_all_normal[idx_start_normal_singlegroup:idx_end_normal_singlegroup, :]
-            u_normal_tensor_single_Group_singel_guess = u_all_normal[idx_start_normal_singlegroup:idx_end_normal_singlegroup,:,:]
-            J_normal_tensor_single_Group_singel_guess = j_all_normal[idx_start_normal_singlegroup:idx_end_normal_singlegroup]
-            
-            #noisy
-            idx_start_noisy_singlegroup = idx_group_of_control_step*CONTROLSTEP_X_NUMNOISY
-            idx_end_noisy_singlegroup = idx_start_noisy_singlegroup + CONTROLSTEP_X_NUMNOISY
-            x_noise_tensor_single_Group_singel_guess = x_all_noisy[idx_start_noisy_singlegroup:idx_end_noisy_singlegroup,:]
-            u_noise_tensor_single_Group_singel_guess = u_all_noisy[idx_start_noisy_singlegroup:idx_end_noisy_singlegroup,:,:]
-            J_noise_tensor_single_Group_singel_guess = j_all_noisy[idx_start_noisy_singlegroup:idx_end_noisy_singlegroup]
-            
-            # cat data
-            u_data_group = torch.cat((u_normal_tensor_single_Group_singel_guess, u_noise_tensor_single_Group_singel_guess), dim=0)
-            x_data_group = torch.cat((x_normal_tensor_single_Group_singel_guess, x_noise_tensor_single_Group_singel_guess), dim=0)
-            J_data_group = torch.cat((J_normal_tensor_single_Group_singel_guess, J_noise_tensor_single_Group_singel_guess), dim=0)
-            
-            GroupFileName = 'grp_'+str(idx_group_of_control_step)+'_'
-            UGroupFileName = GroupFileName + U_DATA_NAME
-            XGroupFileName = GroupFileName + X0_CONDITION_DATA_NAME
-            JGroupFileName = GroupFileName + J_DATA_NAME
-            
-            torch.save(u_data_group, os.path.join(SAVE_PATH, UGroupFileName))
-            torch.save(x_data_group, os.path.join(SAVE_PATH, XGroupFileName))
-            torch.save(J_data_group, os.path.join(SAVE_PATH, JGroupFileName))
     
     except Exception as e:
         print("wrong! dataset will fail!")
@@ -364,14 +314,21 @@ def GenerateRandomInitialGuess(min_random, max_random):
 ######################################################################################################################
 # ##### data collecting loop #####
 # data (x,u) collecting (saved in PT file)
-SIZE_NORMAL_DATA = INITIAL_GUESS_NUM*num_datagroup*(CONTROL_STEPS)
-SIZE_NOISE_DATA = INITIAL_GUESS_NUM*num_datagroup*CONTROLSTEP_X_NUMNOISY
-x_normal_shape = (SIZE_NORMAL_DATA,NUM_STATE)
-u_normal_shape = (SIZE_NORMAL_DATA,HOR,1)
-j_normal_shape = (SIZE_NORMAL_DATA)
-x_noise_shape = (SIZE_NOISE_DATA,NUM_STATE)
-u_noise_shape = (SIZE_NOISE_DATA,HOR,1)
-j_noise_shape = (SIZE_NOISE_DATA)
+NUM_GROUP_INI_GUESS = FIND_GLOBAL_NUM*num_datagroup
+SIZE_NOR_CANDIDATE_DATA = NUM_GROUP_INI_GUESS*(CONTROL_STEPS)
+SIZE_NOR_DATA_SELECT = SIZE_NOR_CANDIDATE_DATA/FIND_GLOBAL_NUM
+
+DIM_NOISE_SELECT = NUM_NOISY_DATA/FIND_GLOBAL_NUM
+SIZE_NOISE_DATA_SELECT = SIZE_NOR_DATA_SELECT * DIM_NOISE_SELECT
+x_nor_candidate_shape = (SIZE_NOR_CANDIDATE_DATA,NUM_STATE)
+u_nor_candidate_shape = (SIZE_NOR_CANDIDATE_DATA,HOR,1)
+j_nor_candidate_shape = (SIZE_NOR_CANDIDATE_DATA)
+x_normal_shape = (SIZE_NOR_DATA_SELECT,NUM_STATE)
+u_normal_shape = (SIZE_NOR_DATA_SELECT,HOR,1)
+j_normal_shape = (SIZE_NOR_DATA_SELECT)
+x_noise_shape = (SIZE_NOISE_DATA_SELECT,NUM_STATE)
+u_noise_shape = (SIZE_NOISE_DATA_SELECT,HOR,1)
+j_noise_shape = (SIZE_NOISE_DATA_SELECT)
 
 def main():
     MAX_CORE_CPU = 24
@@ -380,15 +337,19 @@ def main():
     print("B_RANDOMINIGUESS_FOR_NOISE=",B_RANDOMINIGUESS_FOR_NOISE,"\n")
     print("start prepare shared memory \n")
     with Manager() as manager:
-        x_normal_shared_memory = manager.list([[0.0] * x_normal_shape[1]] * x_normal_shape[0])
-        u_normal_shared_memory = manager.list([[[0.0] for _ in range(u_normal_shape[1])] for _ in range(u_normal_shape[0])])
-        j_normal_shared_memory = manager.list([0.0] * j_normal_shape)
+        x_nor_candidate_shared_memory = manager.list([[0.0] * x_nor_candidate_shape[1]] * x_nor_candidate_shape[0])
+        u_nor_candidate_shared_memory = manager.list([[[0.0] for _ in range(u_nor_candidate_shape[1])] for _ in range(u_nor_candidate_shape[0])])
+        j_nor_candidate_shared_memory = manager.list([0.0] * j_nor_candidate_shape)
+        x_nor_bset_shared_memory = manager.list([[0.0] * x_normal_shape[1]] * x_normal_shape[0])
+        u_nor_best_shared_memory = manager.list([[[0.0] for _ in range(u_normal_shape[1])] for _ in range(u_normal_shape[0])])
+        j_nor_best_shared_memory = manager.list([0.0] * j_normal_shape)
         x_noise_shared_memory = manager.list([[0.0] * x_noise_shape[1]] * x_noise_shape[0])
         u_noise_shared_memory = manager.list([[[0.0] for _ in range(u_noise_shape[1])] for _ in range(u_noise_shape[0])])
         j_noise_shared_memory = manager.list([0.0] * j_noise_shape)
         
-        argument_each_group = []
+        argument_ForNormalCandidate = []
         for turn in range(0,num_datagroup):
+            for idx_candidate_iniguess in range():
             # initial guess
             u_ini_guess, x_ini_guess = GenerateRandomInitialGuess(MIN_U_INIGUESS, MAX_U_INIGUESS)
             idx_group_of_control_step = turn
@@ -399,18 +360,17 @@ def main():
             theta_red_0 = ThetaToRedTheta(theta_0)
             x0 = np.array([x_0, 0.0, theta_0, 0, theta_red_0])
             
-            argument_each_group.append((x_ini_guess, u_ini_guess, idx_group_of_control_step, x0, 
-                                        x_normal_shared_memory, u_normal_shared_memory, j_normal_shared_memory,
-                                        x_noise_shared_memory, u_noise_shared_memory, j_noise_shared_memory))
+            argument_ForNormalCandidate.append((x_ini_guess, u_ini_guess, idx_group_of_control_step, x0, 
+                                        x_nor_candidate_shared_memory, u_nor_candidate_shared_memory, j_nor_candidate_shared_memory))
             
         print("start generate data \n")
         with Pool(processes=MAX_CORE_CPU) as pool:
-            pool.starmap(RunMPCForSingle_IniState_IniGuess, argument_each_group)
+            pool.starmap(RollOutMPCForSingleGroupANdIniGuess_Normal, argument_ForNormalCandidate)
                 
         # shared memory with manager list
-        x_all_normal = torch.from_numpy(np.array(x_normal_shared_memory))
-        u_all_normal = torch.from_numpy(np.array(u_normal_shared_memory))
-        j_all_normal = torch.from_numpy(np.array(j_normal_shared_memory))
+        x_all_normal = torch.from_numpy(np.array(x_nor_candidate_shared_memory))
+        u_all_normal = torch.from_numpy(np.array(u_nor_candidate_shared_memory))
+        j_all_normal = torch.from_numpy(np.array(j_nor_candidate_shared_memory))
         
         x_all_noisy = torch.from_numpy(np.array(x_noise_shared_memory))
         u_all_noisy = torch.from_numpy(np.array(u_noise_shared_memory))
