@@ -178,3 +178,7 @@ data_trajectories
 *.pickle
 
 *tar.gz
+
+*.yaml
+*.npy
+*logfile
