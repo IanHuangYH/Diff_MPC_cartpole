@@ -13,7 +13,7 @@ import time
 SAVE_PATH = "/MPC_DynamicSys/sharedVol/train_data/nmpc/test"
 
 # control steps
-CONTROL_STEPS = 20
+CONTROL_STEPS = 50
 
 # data range
 NUM_INITIAL_X = 2
@@ -198,12 +198,12 @@ for idx_ini_guess in range(0, INITIAL_GUESS_NUM):
         theta_red_0 = ThetaToRedTheta(theta_0)
         x0 = np.array([x_0, 0.0, theta_0, 0, theta_red_0])
         if (DEBUG == 1):
-            x_0 = 0.5
-            theta_0 = np.pi*3/4
+            x_0 = 0
+            theta_0 = 2.2
             theta_red_0 = ThetaToRedTheta(theta_0)
             x0 = np.array([x_0, 0.0, theta_0, 0, theta_red_0])
-            x_ini_guess = 3
-            u_ini_guess = 4500
+            x_ini_guess = -5
+            u_ini_guess = -200
         #print(f'x0-- {x0}')
         x_track[:,0] = x0
 

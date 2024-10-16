@@ -1,10 +1,8 @@
 from torch_robotics.isaac_gym_envs.motion_planning_envs import PandaMotionPlanningIsaacGymEnv, MotionPlanningController
 
 import casadi as ca
-
 import numpy as np
 import os
-
 import matplotlib.pyplot as plt
 import matplotlib
 matplotlib.use('Agg')
@@ -24,13 +22,16 @@ from multiprocessing import Pool
 import multiprocessing
 
 # modify
-DATASET = 'NMPC_UJ_Dataset'
-J_NORMALIZER = 'LogMinMaxNormalizer'
+DATASET = 'NMPC_Dataset'
+J_NORMALIZER = 'LimitsNormalizer'
+UX_NORMALIZER = 'GaussianNormalizer'
 TRAINED_MODELS_DIR = 'trained_models' 
-MODEL_FOLDER = 'nmpc_batch_4096_random112500_logminmax'
+MODEL_FOLDER = 'nmpc_batch_4096_random112500_zscroe_xu_randominiguess_noisedata_decayguess1'
 RESULT_SAVED_PATH = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/model_performance_saving/'
 MODEL_SAVED_PATH = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/data_trained_models/'+MODEL_FOLDER
-DATA_LOAD_PATH = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/training_data/CartPole-NMPC/Random_112500'
+DATA_LOAD_PATH = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/training_data/CartPole-NMPC/Random_also_noisedata_decayguess1_112500'
+
+B_PEDICT_J_BYMODEL = 0
 
 INITILA_X = 10
 INITIAL_THETA = 15
@@ -38,12 +39,14 @@ CONTROL_STEP = 50
 NOISE_NUM = 15
 HOR = 64
 
+NUM_FIND_GLOBAL = 5
+# fix_random_seed(40)
+
 # Data Name Setting
 filename_idx = '_ini_'+str(INITILA_X)+'x'+str(INITIAL_THETA)+'_noise_'+str(NOISE_NUM)+'_step_'+str(CONTROL_STEP)+'_hor_'+str(HOR)+'.pt'
 X0_CONDITION_DATA_NAME = 'x0' + filename_idx
 U_DATA_FILENAME = 'u' + filename_idx
 J_DATA_FILENAME = 'j' + filename_idx
-
 
 
 # dynamic parameter
@@ -64,18 +67,18 @@ PI_UNDER_1 = 1/np.pi
 TS = 0.01
 X0_RANGE = np.array([-0.5, 0.5])
 THETA0_RANGE = np.array([3*np.pi/4, 5*np.pi/4])
-NUM_STATE = 5
 
-NUM_FIND_GLOBAL = 5
+NUM_STATE = 5
 
 DEBUG = 1
 
-NUM_FIND_GLOBAL = 5
-
 WEIGHT_GUIDANC = 0.01 # non-conditioning weight
+X0_IDX = 150 # range:[0,199] 20*20 data 
 
 
-RESULT_FOLDER = os.path.join(RESULT_SAVED_PATH, MODEL_FOLDER)
+
+RESULT_NAME = MODEL_FOLDER
+RESULT_FOLDER = os.path.join(RESULT_SAVED_PATH, RESULT_NAME)
 
 
 
@@ -210,7 +213,7 @@ def PickBestDiffResult( candidate_list:list ) -> torch.tensor:
             best_idx = i+1
     return candidate_list[best_idx][0], candidate_list[best_idx][1]
 
-def runMPC(x0_test_red:np.array, result_dir, Q, R, P, initial_guess_x, initial_guess_u):
+def runMPC(x0_test_red:np.array, result_dir, Q, R, P, Hor, initial_guess_x, initial_guess_u):
     # ##### MPC setting #####
     opts_setting = {'ipopt.max_iter':20000, 'ipopt.acceptable_tol':1e-8, 'ipopt.acceptable_obj_change_tol':1e-6, 'ipopt.print_level': 0, 'print_time': 0, 'ipopt.sb': 'yes'}
     idx_pos_neg = 0
@@ -225,7 +228,7 @@ def runMPC(x0_test_red:np.array, result_dir, Q, R, P, initial_guess_x, initial_g
     x_cur = x0_test_red
     ############# control loop ##################
     for i in range(0, CONTROL_STEP):
-        X_sol, U_sol, Cost_sol = MPC_Solve(EulerForwardCartpole_virtual_Casadi, dynamic_update_virtual_Casadi, x_cur, initial_guess_x, initial_guess_u, NUM_STATE, HOR, Q, R, P, TS, opts_setting)
+        X_sol, U_sol, Cost_sol = MPC_Solve(EulerForwardCartpole_virtual_Casadi, dynamic_update_virtual_Casadi, x_cur, initial_guess_x, initial_guess_u, NUM_STATE, Hor, Q, R, P, TS, opts_setting)
         u_first = U_sol[0]
         x_next = EulerForwardCartpole_virtual(TS, x_cur, u_first)
 
@@ -285,6 +288,14 @@ def experiment(
     model_dir: str,
     
     result_dir: str = RESULT_FOLDER,
+    
+    train_data_load_path: str = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/training_data/CartPole-NMPC/',
+    
+    u_filename: str = None,
+    
+    j_filename: str = None,
+    
+    x0_filename: str = None,
 
     planner_alg: str = 'mpd',
 
@@ -299,6 +310,7 @@ def experiment(
     # MANDATORY
     seed: int = 30,
     results_dir: str = 'logs',
+    load_model_dir: str = None
     ##############################################################
     # **kwargs
 ):
@@ -319,23 +331,31 @@ def experiment(
     
 
     args = load_params_from_yaml(os.path.join(model_dir, "args.yaml"))
+    
+    args.pop('j_filename', None)
+    args.pop('u_filename', None)
+    args.pop('x0_filename', None)
+    args.pop('train_data_load_path', None)
 
     #################################################################
     # Load dataset
     train_subset, train_dataloader, val_subset, val_dataloader = get_dataset(
         dataset_class=DATASET,
-        train_data_load_path=DATA_LOAD_PATH,
         j_normalizer=J_NORMALIZER,
-        u_filename = U_DATA_FILENAME,
-        j_filename = J_DATA_FILENAME,
-        x0_filename = X0_CONDITION_DATA_NAME,
+        train_data_load_path = train_data_load_path,
+        j_filename=j_filename,
+        u_filename = u_filename,
+        x0_filename = x0_filename,
+        ux_normalizer = UX_NORMALIZER,
         **args,
         tensor_args=tensor_args
+
     )
     dataset = train_subset.dataset
     print(f'dataset -- {len(dataset)}')
 
     n_support_points = dataset.n_support_points
+    Num_Hor_u = n_support_points - 1 # last one is j
     print(f'n_support_points -- {n_support_points}')
     print(f'state_dim -- {dataset.state_dim}')
 
@@ -349,8 +369,8 @@ def experiment(
     print('initial_state=(', x_track_d[:,0],')')
     
     FindGlobal_list = []
-    for i in range(5):
-        tensor = torch.randn(1, HOR, 1)  # Create a 1x64x1 tensor
+    for i in range(NUM_FIND_GLOBAL):
+        tensor = torch.randn(1, n_support_points, 1)  # Create a 1x64x1 tensor
         FindGlobal_list.append([0, tensor])
         
     x_cur = x0_test_red
@@ -406,28 +426,28 @@ def experiment(
             print(f't_model_sampling: {timer_model_sampling.elapsed:.3f} sec')
 
             ########
-            u_iters = dataset.unnormalize_states(u_normalized_iters)
+            u_iters = dataset.unnormalize_states(u_normalized_iters[:,:,0:Num_Hor_u,:])
             u_final_iter_candidate = u_iters[-1]
             u_final_iter_candidate = u_final_iter_candidate.cpu()
+            
+            # cal cost
             FindGlobal_list[j][0] = calMPCCost(Q,R,P,u_final_iter_candidate,x_cur, EulerForwardCartpole_virtual, TS)
             FindGlobal_list[j][1] = u_final_iter_candidate
+                
         
-        j_best_cand, u_best_cand = PickBestDiffResult(FindGlobal_list)
+        j_predict, u_best_cand = PickBestDiffResult(FindGlobal_list)
+        j_track_d[i] = j_predict
         
             
 
         print(f'\n--------------------------------------\n')
-        
-        horizon_inputs = np.zeros((1, HOR))
         u_best_cand = u_best_cand.cpu()
-        horizon_inputs = u_best_cand.squeeze(-1).numpy()
-        applied_input = horizon_inputs[0][0]
+        applied_input = u_best_cand[0,0,0]
         print("step:",i,'\n')
         print(f'applied_input -- {applied_input}')
-
+        
         # save the control input from diffusion sampling
         u_track_d[i] = applied_input
-        j_track_d[i] = j_best_cand
 
         # update cart pole state
         x_next = EulerForwardCartpole_virtual(TS, x_cur, applied_input)
@@ -462,14 +482,15 @@ def experiment(
 
 def main():
     arg_list = []
-    model_list = [20000]
+    # model_list = [10000, 50000, 100000, 150000, 200000, 250000, 300000, 350000]
+    model_list = [8000]
     num_modelread = len(model_list)
     
-    MAX_CORE_CPU = 16
+    MAX_CORE_CPU = 1
     
     #initial state
     x_0_test = -0.47
-    theta_0_test = 3*np.pi/4 +0.0025
+    theta_0_test = 5*np.pi/4
     thetared_0_test = ThetaToRedTheta(theta_0_test)
     x0_test_red = np.array([x_0_test , 0, theta_0_test, 0, thetared_0_test])
     x0_test_clean = np.array([[x_0_test , 0, thetared_0_test, 0]])
@@ -480,25 +501,30 @@ def main():
     Q = np.diag([0.01, 0.01, 0, 0.01, Q_REDUNDANT])
     R = np.diag([0.001])
     P = np.diag([0.01, 0.1, 0, 0.1, P_REDUNDANT])
+    HORIZON = 64 # mpc horizon
     initial_guess_x_grp = [5, 0]
     initial_guess_u_grp = [1000, -10000]
     idx_pos = 0
     idx_neg = 1
     
-    # run MPC
-    # runMPC(x0_test_red, RESULT_FOLDER, Q, R, P, initial_guess_x_grp[idx_pos], initial_guess_u_grp[idx_pos])
-    # runMPC(x0_test_red, RESULT_FOLDER, Q, R, P, initial_guess_x_grp[idx_neg], initial_guess_u_grp[idx_neg])
-    
     # prepare multi-task and run diffusion
     for i in range(num_modelread):
-        model_path = os.path.join(MODEL_SAVED_PATH, str(model_list[i]))
+        model_path = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/data_trained_models/'+str(MODEL_FOLDER)+'/'+ str(model_list[i])
         result_path = os.path.join(RESULT_FOLDER, str(model_list[i]))
         arg_list.append((experiment, {'model_dir': model_path, 'result_dir': result_path, 
                                       'x0_test_red':x0_test_red, 'x0_test_clean':x0_test_clean, 'Q':Q, 'R':R, 'P':P,
-                                      'results_dir':'logs', 'seed': 30}))
+                                      'results_dir':'logs', 'seed': 30, 'load_model_dir':MODEL_SAVED_PATH, 
+                                      'train_data_load_path':DATA_LOAD_PATH,
+                                      'u_filename': U_DATA_FILENAME, 'j_filename': J_DATA_FILENAME, 'x0_filename': X0_CONDITION_DATA_NAME,}))
         
     with Pool(processes=MAX_CORE_CPU) as pool:
         pool.starmap(run_experiment, arg_list)
+        
+    # run MPC
+    runMPC(x0_test_red, RESULT_FOLDER, Q, R, P, HORIZON, initial_guess_x_grp[idx_pos], initial_guess_u_grp[idx_pos])
+    runMPC(x0_test_red, RESULT_FOLDER, Q, R, P, HORIZON, initial_guess_x_grp[idx_neg], initial_guess_u_grp[idx_neg])
+        
+    print("save data finsih")
 
 if __name__ == '__main__':
     multiprocessing.set_start_method("spawn")

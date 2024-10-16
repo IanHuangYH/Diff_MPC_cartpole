@@ -61,6 +61,7 @@ def experiment(
     results_dir: str = 'logs',
     dataset_type: str= 'NMPC_UJ_Dataset',
     j_normalizer_setting:str='LimitsNormalizer',
+    ux_normalizer_setting: str='LimitsNormalizer',
     temp_model_save_dir:str='/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/data_trained_models/',
     
     ########################################################################
@@ -97,6 +98,7 @@ def experiment(
         results_dir=results_dir,
         save_indices=True,
         j_normalizer=j_normalizer_setting,
+        ux_normalizer = ux_normalizer_setting,
         train_data_load_path=train_data_load_path,
         u_filename = u_filename,
         j_filename = j_filename,

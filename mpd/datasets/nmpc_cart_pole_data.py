@@ -9,21 +9,6 @@ from torch.utils.data import Dataset
 from mpd.datasets.normalization import DatasetNormalizer
 from mpd.utils.loading import load_params_from_yaml
 
-INITILA_X = 10
-INITIAL_THETA = 20
-INITIAL_GUESS = 2
-CONTROL_STEP = 80
-NOISE_NUM = 20
-HOR = 64
-# training data amount
-TRAINING_DATA_AMOUNT = INITILA_X * INITIAL_THETA * INITIAL_GUESS * CONTROL_STEP * (NOISE_NUM+1)
-
-dataset_base_dir = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/training_data' 
-
-# Data Name Setting
-filename_idx = '_ini_'+str(INITILA_X)+'x'+str(INITIAL_THETA)+'_noise_'+str(NOISE_NUM)+'_step_'+str(CONTROL_STEP)+'_hor_'+str(HOR)+'.pt'
-U_DATA_FILENAME = 'u' + filename_idx
-X0_CONDITION_DATA_NAME = 'x0' + filename_idx
 
 class NMPC_Dataset(Dataset, abc.ABC):
 
@@ -31,25 +16,31 @@ class NMPC_Dataset(Dataset, abc.ABC):
                  dataset_subdir=None,
                  include_velocity=False,
                  normalizer='LimitsNormalizer',
+                 j_normalizer='LimitsNormalizer',
+                 ux_normalizer='LimitsNormalizer',
                  use_extra_objects=False,
                  obstacle_cutoff_margin=None,
                  tensor_args=None,
+                 dataset_base_dir = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/training_data/CartPole-NMPC/',
+                 u_filename=None,
+                 j_filename=None,
+                 x0_filename=None, 
                  **kwargs):
 
         self.tensor_args = tensor_args
 
         self.dataset_subdir = dataset_subdir
-        self.base_dir = os.path.join(dataset_base_dir, self.dataset_subdir)
+        self.base_dir = dataset_base_dir
 
         # -------------------------------- Load inputs data ---------------------------------
 
-        self.field_key_inputs = 'inputs'
         self.field_key_condition = 'condition'
+        self.field_key_inputs = 'inputs'
         self.fields = {}
 
         # load data
         self.include_velocity = include_velocity
-        self.load_inputs()
+        self.load_inputs(u_filename, x0_filename)
 
         # dimensions
         b, h, d = self.dataset_shape = self.fields[self.field_key_inputs].shape
@@ -59,31 +50,31 @@ class NMPC_Dataset(Dataset, abc.ABC):
         self.inputs_dim = (self.n_support_points, d)
 
         # normalize the inputs (for the diffusion model)
-        self.normalizer = DatasetNormalizer(self.fields, normalizer=normalizer)
+        self.normalizer = DatasetNormalizer(self.fields, normalizer=ux_normalizer)
         # self.fields[self.field_key_condition] = self.condition
-        self.normalizer_keys = [self.field_key_inputs, self.field_key_condition] # [self.field_key_inputs, self.field_key_task]
+        self.normalizer_keys = [self.field_key_inputs, self.field_key_condition] # [self.field_key_u, self.field_key_task]
         self.normalize_all_data(*self.normalizer_keys)
 
-    def load_inputs(self):
+    def load_inputs(self, u_filename:str, x0_filename:str):
         # load training inputs
         check = self.tensor_args['device']
         print(f'tensor_device -- {check}')
-        inputs_load = torch.load(os.path.join(self.base_dir, U_DATA_FILENAME),map_location=self.tensor_args['device']) 
-        inputs_load = inputs_load.float()
-        inputs_training = inputs_load
-        print(f'inputs_training -- {inputs_training.shape}')
+        u_load = torch.load(os.path.join(self.base_dir, u_filename),map_location=self.tensor_args['device'])
+        u_load = u_load.float()
+        print(f'inputs_training -- {u_load.shape}')
     
-        self.fields[self.field_key_inputs] = inputs_training
+        self.fields[self.field_key_inputs] = u_load
 
         # x0 condition
-        x0_condition =  torch.load(os.path.join(self.base_dir, X0_CONDITION_DATA_NAME),map_location=self.tensor_args['device'])
+        x0_condition =  torch.load(os.path.join(self.base_dir, x0_filename),map_location=self.tensor_args['device'])
         x_xdot = x0_condition[:,0:2]
         theta_transform = x0_condition[:,4].unsqueeze(1)
         theta_dot = x0_condition[:,3].unsqueeze(1)
         x0_condition_reduce_theta = torch.cat((x_xdot, theta_transform, theta_dot), dim=1)
-        x0_condition_final = x0_condition_reduce_theta.float()
-        print(f'condition_list_dimension -- {len(x0_condition_final),len(x0_condition_final[0])}')
-        self.fields[self.field_key_condition] = x0_condition_final
+        x0_condition_reduce_theta = x0_condition_reduce_theta.float()
+        
+        self.fields[self.field_key_condition] = x0_condition_reduce_theta
+        print(f'condition_list_dimension -- {len(x0_condition_reduce_theta),len(x0_condition_reduce_theta[0])}')
         print(f'fields -- {len(self.fields)}')
 
     def normalize_all_data(self, *keys):

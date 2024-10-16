@@ -22,6 +22,25 @@ INITIAL_GUESS_DECAY = 1
 FIND_GLOBAL_NUM = 5
 
 B_IFNOR_CAND_FINISHED = 1
+PATH_X_CAN_NOR = os.path.join(SAVE_PATH, 'x_cand_nor.pt')
+PATH_U_CAN_NOR = os.path.join(SAVE_PATH, 'u_cand_nor.pt')
+PATH_J_CAN_NOR = os.path.join(SAVE_PATH, 'j_cand_nor.pt')
+
+
+B_IFNOR_SELECT_FINISHED = 1
+PATH_X_BEST_NOR = os.path.join(SAVE_PATH, 'x_best_nor.pt')
+PATH_U_BEST_NOR = os.path.join(SAVE_PATH, 'u_best_nor.pt')
+PATH_J_BEST_NOR = os.path.join(SAVE_PATH, 'j_best_nor.pt')
+
+B_IFNOISE_CAND_FINISHED = 1
+PATH_X_CAN_NOISE = os.path.join(SAVE_PATH, 'x_cand_noise.pt')
+PATH_U_CAN_NOISE = os.path.join(SAVE_PATH, 'u_cand_noise.pt')
+PATH_J_CAN_NOISE = os.path.join(SAVE_PATH, 'j_cand_noise.pt')
+
+B_IFNOISE_SELECT_FINISHED = 0
+PATH_X_BEST_NOISE = os.path.join(SAVE_PATH, 'x_best_noise.pt')
+PATH_U_BEST_NOISE = os.path.join(SAVE_PATH, 'u_best_noise.pt')
+PATH_J_BEST_NOISE = os.path.join(SAVE_PATH, 'j_best_noise.pt')
 
 
 
@@ -242,28 +261,31 @@ def MPC_NormalData_Process(x0, x_ini_guess, u_ini_guess, idx_group_of_control_st
 
 def GenerateNoiseCandForEachStep( nGuess, x0_normal, u0_normal, idx_group_of_control_step, u_noise_candidate, j_noise_candidate, x_noise_candidate, idx_control_step):
     
-    
-    noisey_x = np.zeros((nGuess, NUM_STATE))
-    u_for_noisy_x = np.zeros((nGuess, HOR, 1))
-    j_for_noisy_x = np.zeros((nGuess))
-    for idx_noisy in range(0,nGuess):
-        if (idx_control_step == 0): 
-            noise = np.random.normal(NOISE_MEAN, NOISE_SD, size = NUM_STATE)
-            noisy_state = x0_normal + noise
-        else:
+    nDataNumForOneStep = NUM_NOISY_DATA
+    x_noise = np.zeros((nDataNumForOneStep, NUM_STATE))
+    u_noise = np.zeros((nDataNumForOneStep, HOR, 1))
+    j_noise = np.zeros((nDataNumForOneStep))
+    for idx_Noiseth in range( DIM_NOISE_SELECT ):
+        if (idx_control_step == 0):
             noise = np.random.normal(NOISE_MEAN, NOISE_SD, size = (1,2))
-            noisy_state = x0_normal + [noise[0,0], 0, noise[0,1],0,0]
-        
+            noisy_state = x0_normal.numpy() + [noise[0,0], 0, noise[0,1],0,0]
+        else:
+            noise = np.random.normal(NOISE_MEAN, NOISE_SD, size = NUM_STATE)
+            noisy_state = x0_normal.numpy() + noise
+            
         noisy_state[IDX_THETA_RED] = ThetaToRedTheta(noisy_state[IDX_THETA])
-        noisey_x[idx_noisy,:] = noisy_state
         
-        U_range = INITIAL_GUESS_DECAY*np.abs(u0_normal)
-        u_ini_guess, x_ini_guess = GenerateRandomInitialGuess(-U_range, U_range)
-        X_noise_sol, U_noisy_sol, Cost_noise_sol = MPC_Solve(EulerForwardCartpole_virtual_Casadi, dynamic_update_virtual_Casadi, noisey_x[idx_noisy,:], x_ini_guess, u_ini_guess, NUM_STATE, HOR, Q, R, P, TS, opts_setting)
-        
-        # gey u, j by x
-        u_for_noisy_x[idx_noisy,:,:] = U_noisy_sol.reshape(1,HOR,1)
-        j_for_noisy_x[idx_noisy] = Cost_noise_sol
+        for idx_iniGuess_forOneNoise in range(0,nGuess):
+            # solve MPC with different ini guess for 1 noise    
+            U_range = INITIAL_GUESS_DECAY*np.abs(u0_normal)
+            u_ini_guess, x_ini_guess = GenerateRandomInitialGuess(-U_range, U_range)
+            X_noise_sol, U_noisy_sol, Cost_noise_sol = MPC_Solve(EulerForwardCartpole_virtual_Casadi, dynamic_update_virtual_Casadi, noisy_state, x_ini_guess, u_ini_guess, NUM_STATE, HOR, Q, R, P, TS, opts_setting)
+            
+            # save data to specified idx
+            nIdxSaveNoisyInOneStep = idx_Noiseth * nGuess + idx_iniGuess_forOneNoise
+            x_noise[nIdxSaveNoisyInOneStep,:] = noisy_state
+            u_noise[nIdxSaveNoisyInOneStep,:,:] = U_noisy_sol.reshape(1,HOR,1)
+            j_noise[nIdxSaveNoisyInOneStep] = Cost_noise_sol
 
 
     # save noise x,u,j data in 0th step 
@@ -271,9 +293,9 @@ def GenerateNoiseCandForEachStep( nGuess, x0_normal, u0_normal, idx_group_of_con
     idx_end_0step_nosie_data = idx_start_0step_nosie_data + NUM_NOISY_DATA
     
     # shared memory with manager list
-    x_noise_candidate[idx_start_0step_nosie_data:idx_end_0step_nosie_data] = noisey_x.tolist()
-    u_noise_candidate[idx_start_0step_nosie_data:idx_end_0step_nosie_data] = u_for_noisy_x.tolist()
-    j_noise_candidate[idx_start_0step_nosie_data:idx_end_0step_nosie_data] = j_for_noisy_x.tolist()
+    x_noise_candidate[idx_start_0step_nosie_data:idx_end_0step_nosie_data] = x_noise.tolist()
+    u_noise_candidate[idx_start_0step_nosie_data:idx_end_0step_nosie_data] = u_noise.tolist()
+    j_noise_candidate[idx_start_0step_nosie_data:idx_end_0step_nosie_data] = j_noise.tolist()
 
 
 def RollOutMPCForSingleGroupANdIniGuess_Normal(x_ini_guess: float, u_ini_guess:float,idx_group_of_control_step:int,x0_state:np.array, 
@@ -325,15 +347,24 @@ def FindBestRollOutFromNormalCandidate(x_candidate:list, u_candidate:list, j_can
     Final_j = torch.zeros((SIZE_NOR_DATA_SELECT,))
 
     for i in range(nGroup):
-        nCurIdx = i*nGuess_ControlStep + (nControlStep-1)
-        nBestIdx = nCurIdx
+        nCurStartIdx = i*nGuess_ControlStep
+        nCurEndIdx = nCurStartIdx + (nControlStep-1)
+        nBestIdx = nCurEndIdx
         for j in range(0,nIniGuess-1):
-            if( j_candidate[nCurIdx+(j+1)*nControlStep] < j_candidate[nBestIdx] ):
-                nBestIdx = nCurIdx+(j+1)*nControlStep
+            if( j_candidate[nCurEndIdx+(j+1)*nControlStep] < j_candidate[nBestIdx] ):
+                nBestIdx = nCurEndIdx+(j+1)*nControlStep
         nBestStartIdx = nBestIdx - nControlStep + 1
-        Final_x[i:i+nControlStep,:] = torch.from_numpy(np.array(x_candidate[nBestStartIdx:nBestIdx+1]))
-        Final_u[i:i+nControlStep,:,:] = torch.from_numpy(np.array(u_candidate[nBestStartIdx:nBestIdx+1]))
-        Final_j[i:i+nControlStep] = torch.from_numpy(np.array(j_candidate[nBestStartIdx:nBestIdx+1]))
+        
+        nSaveStartIdx = i*nControlStep
+        nSaveEndIdx = nSaveStartIdx + nControlStep
+        Final_x[nSaveStartIdx:nSaveEndIdx,:] = torch.from_numpy(np.array(x_candidate[nBestStartIdx:nBestIdx+1]))
+        Final_u[nSaveStartIdx:nSaveEndIdx,:,:] = torch.from_numpy(np.array(u_candidate[nBestStartIdx:nBestIdx+1]))
+        Final_j[nSaveStartIdx:nSaveEndIdx] = torch.from_numpy(np.array(j_candidate[nBestStartIdx:nBestIdx+1]))
+        
+    # save
+    torch.save(Final_x, PATH_X_BEST_NOR)
+    torch.save(Final_u, PATH_U_BEST_NOR)
+    torch.save(Final_j, PATH_J_BEST_NOR)
         
     return Final_u, Final_x, Final_j
 
@@ -420,21 +451,32 @@ def main():
             x_cand_nor = torch.from_numpy(np.array(x_nor_candidate_shared_memory))
             u_cand_nor = torch.from_numpy(np.array(u_nor_candidate_shared_memory))
             j_cand_nor = torch.from_numpy(np.array(j_nor_candidate_shared_memory))
-            torch.save(x_cand_nor, os.path.join(SAVE_PATH, 'x_cand_nor.pt'))
-            torch.save(u_cand_nor, os.path.join(SAVE_PATH, 'u_cand_nor.pt'))
-            torch.save(j_cand_nor, os.path.join(SAVE_PATH, 'j_cand_nor.pt'))
+            torch.save(x_cand_nor, PATH_X_CAN_NOR)
+            torch.save(u_cand_nor, PATH_U_CAN_NOR)
+            torch.save(j_cand_nor, PATH_J_CAN_NOR)
+            
+            
+        ######################################## step 2, select best data from normal #####################
          
-        if B_IFNOR_CAND_FINISHED == 1:
-            x_cand_nor = torch.load(os.path.join(SAVE_PATH, 'x_cand_nor.pt'))
+        if (B_IFNOR_CAND_FINISHED == 1 and B_IFNOR_SELECT_FINISHED == 0):
+            x_cand_nor = torch.load(PATH_X_CAN_NOR)
             x_nor_candidate_shared_memory = x_cand_nor.tolist()
-            u_cand_nor = torch.load(os.path.join(SAVE_PATH, 'u_cand_nor.pt'))
+            u_cand_nor = torch.load(PATH_U_CAN_NOR)
             u_nor_candidate_shared_memory = u_cand_nor.tolist()
-            j_cand_nor = torch.load(os.path.join(SAVE_PATH, 'j_cand_nor.pt'))
+            j_cand_nor = torch.load(PATH_J_CAN_NOR)
             j_nor_candidate_shared_memory = j_cand_nor.tolist()
         # find best normal data
-        u_nor_best, x_nor_bset, j_nor_best = FindBestRollOutFromNormalCandidate(x_nor_candidate_shared_memory, u_nor_candidate_shared_memory, j_nor_candidate_shared_memory, 
-                                                                          num_datagroup, FIND_GLOBAL_NUM, CONTROL_STEPS)
+        if B_IFNOR_SELECT_FINISHED == 0:
+            u_nor_best, x_nor_bset, j_nor_best = FindBestRollOutFromNormalCandidate(x_nor_candidate_shared_memory, u_nor_candidate_shared_memory, j_nor_candidate_shared_memory, 
+                                                                            num_datagroup, FIND_GLOBAL_NUM, CONTROL_STEPS)
         
+        ####################################### step 3, generate candidate noisy data #########################
+        
+        if B_IFNOR_SELECT_FINISHED == 1:
+            x_nor_bset = torch.load(PATH_X_BEST_NOR)
+            u_nor_best = torch.load(PATH_U_BEST_NOR)
+            j_nor_best = torch.load(PATH_J_BEST_NOR)
+            
         # prepare noisy data argument
         x_noise_shared_memory = manager.list([[0.0] * x_noise_shape[1]] * x_noise_shape[0])
         u_noise_shared_memory = manager.list([[[0.0] for _ in range(u_noise_shape[1])] for _ in range(u_noise_shape[0])])
@@ -447,13 +489,29 @@ def main():
                 x0_normal = x_nor_bset[nIdxSinglePointFromNormal,:]
                 u0_normal = u_nor_best[nIdxSinglePointFromNormal,0,0]
                 idx_group_of_control_step = turn
-                0
+                
                 argument_ForNoisyCandidate.append((FIND_GLOBAL_NUM, x0_normal, u0_normal, idx_group_of_control_step, u_noise_shared_memory, j_noise_shared_memory, x_noise_shared_memory, idx_controlstep))
         
         # generate noisy data candidate
         with Pool(processes=MAX_CORE_CPU) as pool:
             pool.starmap(GenerateNoiseCandForEachStep, argument_ForNoisyCandidate)
             
+        # save noise candidate
+        x_cand_noise = torch.from_numpy(np.array(x_noise_shared_memory))
+        u_cand_noise = torch.from_numpy(np.array(u_noise_shared_memory))
+        j_cand_noise = torch.from_numpy(np.array(j_noise_shared_memory))
+        torch.save(x_cand_noise, PATH_X_CAN_NOISE)
+        torch.save(u_cand_noise, PATH_U_CAN_NOISE)
+        torch.save(j_cand_noise, PATH_J_CAN_NOISE)
+            
+        ############################################### step 4. select best noise data ############################################################
+        if (B_IFNOISE_CAND_FINISHED == 1 and B_IFNOISE_SELECT_FINISHED == 0):
+            x_cand_noise = torch.load(PATH_X_CAN_NOISE)
+            x_noise_shared_memory = x_cand_noise.tolist()
+            u_cand_noise = torch.load(PATH_U_CAN_NOISE)
+            u_noise_shared_memory = u_cand_noise.tolist()
+            j_cand_noise = torch.load(PATH_J_CAN_NOISE)
+            j_noise_shared_memory = j_cand_noise.tolist()
         # find best noisy data
         u_noisy_best, x_noisy_bset, j_noisy_best = FindBestRollOutFromNoisyCandidate(x_noise_shared_memory, u_noise_shared_memory, j_noise_shared_memory, 
                                                                                 num_datagroup, FIND_GLOBAL_NUM, CONTROL_STEPS)

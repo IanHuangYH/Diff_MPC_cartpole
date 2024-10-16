@@ -290,3 +290,36 @@ class LogZScoreNormalizer(LogNormalizer):
         x = torch.exp(x)
 
         return x
+    
+class GaussianMinMaxNormalizer(Normalizer):
+    '''
+        normalizes to zero mean and unit variance
+    '''
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.means = self.X.mean(dim=0)
+        self.stds = self.X.std(dim=0)
+        self.z = 1
+        self.min_Gaussian = (self.mins - self.means)/self.stds
+        self.max_Gaussian = (self.maxs - self.means)/self.stds
+
+    def __repr__(self):
+        return (
+            f'''[ Normalizer ] dim: {self.mins.size}\n    '''
+            f'''means: {torch.round(self.means, decimals=2)}\n    '''
+            f'''stds: {torch.round(self.z * self.stds, decimals=2)}\n'''
+        )
+
+    def normalize(self, x):
+        x_Gaussian = (x - self.means) / self.stds
+        x = 2*(x_Gaussian - self.min_Gaussian)/(self.max_Gaussian-self.min_Gaussian)-1
+        return x
+
+    def unnormalize(self, x, eps=1e-4):
+        if x.max() > 1 + eps or x.min() < -1 - eps:
+            # print(f'[ datasets/mujoco ] Warning: sample out of range | ({x.min():.4f}, {x.max():.4f})')
+            x = torch.clip(x, -1, 1)
+        x_Gaussian = (self.max_Gaussian-self.min_Gaussian) * (x+1) * 0.5 + self.min_Gaussian
+        x = x_Gaussian * self.stds + self.means
+        return x

@@ -3,7 +3,6 @@ from itertools import product
 
 from experiment_launcher import Launcher
 from experiment_launcher.utils import is_local
-from mpd.datasets.nmpc_cart_pole_data import TRAINING_DATA_AMOUNT
 
 os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
 
@@ -12,13 +11,15 @@ os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
 # modify
 # training data folder
 DATASET_SUBDIR = 'CartPole-NMPC'
-MODEL_SAVED_PATH = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/data_trained_models/nmpc_batch_4096_random112500_logminmax_randominiguess_noisedata_decayguess1'
-LOSS_CLASS = 'GaussianDiffusionNMPC_UJ_Loss'
+MODEL_SAVED_PATH = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/data_trained_models/nmpc_batch_4096_random112500_zscore_xu_zscore_j_randominiguess_noisedata_decayguess1'
+B_TRAIN_J = True
+
 BATCH_SIZE = 4096
-EPOCHES = 300 # times that the whole data should be trained
-GPU_IDX = 2
-DATASET_TYPE = 'NMPC_UJ_Dataset'
-J_NORMALIZER = 'LogMinMaxNormalizer'
+EPOCHES = 300
+GPU_IDX = 0
+
+J_NORMALIZER = 'GaussianNormalizer'
+UX_NORMALIZER = 'GaussianNormalizer'
 
 DATA_LOAD_PATH = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/training_data/CartPole-NMPC/Random_also_noisedata_decayguess1_112500'
 INITILA_X = 10
@@ -26,6 +27,16 @@ INITIAL_THETA = 15
 CONTROL_STEP = 50
 NOISE_NUM = 15
 HOR = 64
+TRAINING_DATA_AMOUNT = INITILA_X*INITIAL_THETA*CONTROL_STEP*(NOISE_NUM+1)
+
+
+# Dataset
+if B_TRAIN_J == True:
+    LOSS_CLASS = 'GaussianDiffusionNMPC_UJ_Loss'
+    DATASET_TYPE = 'NMPC_UJ_Dataset'
+else:
+    LOSS_CLASS = 'GaussianDiffusionCartPoleLoss'
+    DATASET_TYPE = 'NMPC_Dataset'
 
 # Data Name Setting
 filename_idx = '_ini_'+str(INITILA_X)+'x'+str(INITIAL_THETA)+'_noise_'+str(NOISE_NUM)+'_step_'+str(CONTROL_STEP)+'_hor_'+str(HOR)+'.pt'
@@ -144,7 +155,7 @@ for dataset_subdir, include_velocity, use_ema, variance_schedule, n_diffusion_st
         num_train_steps = TRAINING_DATA_AMOUNT*EPOCHES/BATCH_SIZE, 
 
         # steps_til_ckpt=50000,
-        steps_til_ckpt=20000, # 10000
+        steps_til_ckpt=2000, # 10000
 
         # steps_til_summary=20000,
         steps_til_summary=2000,
@@ -163,6 +174,8 @@ for dataset_subdir, include_velocity, use_ema, variance_schedule, n_diffusion_st
         dataset_type = DATASET_TYPE,
         
         j_normalizer_setting = J_NORMALIZER,
+        
+        ux_normalizer_setting = UX_NORMALIZER,
         
         temp_model_save_dir = MODEL_SAVED_PATH,
         

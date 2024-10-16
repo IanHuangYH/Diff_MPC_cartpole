@@ -15,8 +15,8 @@ class NMPC_UJ_Dataset(Dataset, abc.ABC):
     def __init__(self,
                  dataset_subdir=None,
                  include_velocity=False,
-                 normalizer='LimitsNormalizer',
-                 j_normalizer='LimitsNormalizer',
+                 ux_normalizer=None,
+                 j_normalizer=None,
                  use_extra_objects=False,
                  obstacle_cutoff_margin=None,
                  tensor_args=None,
@@ -50,7 +50,7 @@ class NMPC_UJ_Dataset(Dataset, abc.ABC):
         self.inputs_dim = (self.n_support_points, d)
 
         # normalize the inputs (for the diffusion model)
-        self.normalizer = DatasetNormalizer(self.fields, normalizer=normalizer)
+        self.normalizer = DatasetNormalizer(self.fields, normalizer=ux_normalizer)
         
         # normalize cost
         self.cost_dic = {} # for initial the datanormalizer
@@ -88,9 +88,10 @@ class NMPC_UJ_Dataset(Dataset, abc.ABC):
         theta_transform = x0_condition[:,4].unsqueeze(1)
         theta_dot = x0_condition[:,3].unsqueeze(1)
         x0_condition_reduce_theta = torch.cat((x_xdot, theta_transform, theta_dot), dim=1)
-        x0_condition_final = x0_condition_reduce_theta.float()
-        self.fields[self.field_key_condition] = x0_condition_final
-        print(f'condition_list_dimension -- {len(x0_condition_final),len(x0_condition_final[0])}')
+        x0_condition_reduce_theta = x0_condition_reduce_theta.float()
+        
+        self.fields[self.field_key_condition] = x0_condition_reduce_theta
+        print(f'condition_list_dimension -- {len(x0_condition_reduce_theta),len(x0_condition_reduce_theta[0])}')
         print(f'fields -- {len(self.fields)}')
         
         

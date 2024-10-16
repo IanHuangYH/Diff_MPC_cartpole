@@ -23,12 +23,13 @@ import multiprocessing
 
 # modify
 DATASET = 'NMPC_UJ_Dataset'
-J_NORMALIZER = 'LogMinMaxNormalizer'
+J_NORMALIZER = 'GaussianNormalizer'
+UX_NORMALIZER = 'GaussianNormalizer'
 TRAINED_MODELS_DIR = 'trained_models' 
-MODEL_FOLDER = 'nmpc_batch_4096_random112500_logminmax_randominiguess_noisedata'
+MODEL_FOLDER = 'nmpc_batch_4096_random112500_zscroeMinmax_xu_LogMinMax_j_randominiguess_noisedata_decayguess1'
 RESULT_SAVED_PATH = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/model_performance_saving/'
 MODEL_SAVED_PATH = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/data_trained_models/'+MODEL_FOLDER
-DATA_LOAD_PATH = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/training_data/CartPole-NMPC/Random_also_noisedata_112500'
+DATA_LOAD_PATH = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/training_data/CartPole-NMPC/Random_also_noisedata_decayguess1_112500'
 
 B_PEDICT_J_BYMODEL = 0
 
@@ -38,7 +39,7 @@ CONTROL_STEP = 50
 NOISE_NUM = 15
 HOR = 64
 
-NUM_FIND_GLOBAL = 20
+NUM_FIND_GLOBAL = 10
 # fix_random_seed(40)
 
 # Data Name Setting
@@ -345,6 +346,7 @@ def experiment(
         j_filename=j_filename,
         u_filename = u_filename,
         x0_filename = x0_filename,
+        ux_normalizer = UX_NORMALIZER,
         **args,
         tensor_args=tensor_args
 
@@ -489,14 +491,14 @@ def experiment(
 def main():
     arg_list = []
     # model_list = [10000, 50000, 100000, 150000, 200000, 250000, 300000, 350000]
-    model_list = [40000]
+    model_list = [8000]
     num_modelread = len(model_list)
     
     MAX_CORE_CPU = 1
     
     #initial state
     x_0_test = -0.47
-    theta_0_test = 3*np.pi/4 +0.0025
+    theta_0_test = 1.8
     thetared_0_test = ThetaToRedTheta(theta_0_test)
     x0_test_red = np.array([x_0_test , 0, theta_0_test, 0, thetared_0_test])
     x0_test_clean = np.array([[x_0_test , 0, thetared_0_test, 0]])
@@ -513,10 +515,6 @@ def main():
     idx_pos = 0
     idx_neg = 1
     
-    # run MPC
-    # runMPC(x0_test_red, RESULT_FOLDER, Q, R, P, HORIZON, initial_guess_x_grp[idx_pos], initial_guess_u_grp[idx_pos])
-    # runMPC(x0_test_red, RESULT_FOLDER, Q, R, P, HORIZON, initial_guess_x_grp[idx_neg], initial_guess_u_grp[idx_neg])
-    
     # prepare multi-task and run diffusion
     for i in range(num_modelread):
         model_path = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/data_trained_models/'+str(MODEL_FOLDER)+'/'+ str(model_list[i])
@@ -529,6 +527,10 @@ def main():
         
     with Pool(processes=MAX_CORE_CPU) as pool:
         pool.starmap(run_experiment, arg_list)
+        
+    # run MPC
+    runMPC(x0_test_red, RESULT_FOLDER, Q, R, P, HORIZON, initial_guess_x_grp[idx_pos], initial_guess_u_grp[idx_pos])
+    runMPC(x0_test_red, RESULT_FOLDER, Q, R, P, HORIZON, initial_guess_x_grp[idx_neg], initial_guess_u_grp[idx_neg])
         
     print("save data finsih")
 
