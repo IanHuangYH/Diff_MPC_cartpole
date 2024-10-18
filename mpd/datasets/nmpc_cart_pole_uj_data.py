@@ -182,3 +182,9 @@ class NMPC_UJ_Dataset(Dataset, abc.ABC):
 
     def normalize_condition(self, x):
         return self.normalize(x, self.field_key_condition)
+    
+    def unnormalize_cost(self, x):
+        return self.normalizer_j.unnormalize(x, self.field_key_j)
+    
+    def normalize_cost(self, x):
+        return self.normalizer_j.normalize(x, self.field_key_j)

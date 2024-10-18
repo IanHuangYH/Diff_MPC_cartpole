@@ -23,23 +23,26 @@ import multiprocessing
 
 # modify
 DATASET = 'NMPC_UJ_Dataset'
-J_NORMALIZER = 'GaussianNormalizer'
-UX_NORMALIZER = 'GaussianNormalizer'
-TRAINED_MODELS_DIR = 'trained_models' 
-MODEL_FOLDER = 'nmpc_batch_4096_random112500_zscroeMinmax_xu_LogMinMax_j_randominiguess_noisedata_decayguess1'
-RESULT_SAVED_PATH = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/model_performance_saving/'
-MODEL_SAVED_PATH = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/data_trained_models/'+MODEL_FOLDER
-DATA_LOAD_PATH = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/training_data/CartPole-NMPC/Random_also_noisedata_decayguess1_112500'
+J_NORMALIZER = 'GaussianNormalizer' #GaussianNormalizer, LimitsNormalizer, LogMinMaxNormalizer, LogZScoreNormalizer, OnlyLogNormalizer
+UX_NORMALIZER = 'GaussianNormalizer' 
+MODEL_FOLDER = 'nmpc_batch_256_random6000_zscore_xu_logzscore_j_selectdata_float64'
+DATA_LOAD_FOLER = 'NN'
 
 B_PEDICT_J_BYMODEL = 0
+# path
+RESULT_SAVED_PATH = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/model_performance_saving/'
+MODEL_SAVED_PATH = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/data_trained_models/'+MODEL_FOLDER
+DATA_LOAD_PATH = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/training_data/CartPole-NMPC/'+DATA_LOAD_FOLER
 
-INITILA_X = 10
-INITIAL_THETA = 15
+
+
+INITILA_X = 5 #10
+INITIAL_THETA = 6 #15
 CONTROL_STEP = 50
-NOISE_NUM = 15
+NOISE_NUM = 3 #15
 HOR = 64
 
-NUM_FIND_GLOBAL = 10
+NUM_FIND_GLOBAL = 5
 # fix_random_seed(40)
 
 # Data Name Setting
@@ -316,7 +319,7 @@ def experiment(
 ):
     ##############################################################
     device = get_torch_device(device)
-    tensor_args = {'device': device, 'dtype': torch.float32}
+    tensor_args = {'device': device, 'dtype': torch.float64}
 
     ###############################################################
     print(f'##########################################################################################################')
@@ -432,7 +435,8 @@ def experiment(
             
             if B_PEDICT_J_BYMODEL == 1:
                 j_final_iter_candidate = u_normalized_iters[-1,0,-1,0].cpu()
-                FindGlobal_list[j][0] = j_final_iter_candidate
+                j_unnor_candidate = dataset.unnormalize_cost(j_final_iter_candidate)
+                FindGlobal_list[j][0] = j_unnor_candidate
                 FindGlobal_list[j][1] = u_final_iter_candidate
             else:
                 FindGlobal_list[j][0] = calMPCCost(Q,R,P,u_final_iter_candidate,x_cur, EulerForwardCartpole_virtual, TS)
@@ -491,14 +495,14 @@ def experiment(
 def main():
     arg_list = []
     # model_list = [10000, 50000, 100000, 150000, 200000, 250000, 300000, 350000]
-    model_list = [8000]
+    model_list = [40000]
     num_modelread = len(model_list)
     
     MAX_CORE_CPU = 1
     
     #initial state
     x_0_test = -0.47
-    theta_0_test = 1.8
+    theta_0_test = 1.85
     thetared_0_test = ThetaToRedTheta(theta_0_test)
     x0_test_red = np.array([x_0_test , 0, theta_0_test, 0, thetared_0_test])
     x0_test_clean = np.array([[x_0_test , 0, thetared_0_test, 0]])
@@ -529,8 +533,8 @@ def main():
         pool.starmap(run_experiment, arg_list)
         
     # run MPC
-    runMPC(x0_test_red, RESULT_FOLDER, Q, R, P, HORIZON, initial_guess_x_grp[idx_pos], initial_guess_u_grp[idx_pos])
-    runMPC(x0_test_red, RESULT_FOLDER, Q, R, P, HORIZON, initial_guess_x_grp[idx_neg], initial_guess_u_grp[idx_neg])
+    # runMPC(x0_test_red, RESULT_FOLDER, Q, R, P, HORIZON, initial_guess_x_grp[idx_pos], initial_guess_u_grp[idx_pos])
+    # runMPC(x0_test_red, RESULT_FOLDER, Q, R, P, HORIZON, initial_guess_x_grp[idx_neg], initial_guess_u_grp[idx_neg])
         
     print("save data finsih")
 

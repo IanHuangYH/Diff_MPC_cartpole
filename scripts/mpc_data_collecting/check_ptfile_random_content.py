@@ -6,15 +6,17 @@ import numpy as np
 
 HOR = 64
 
-NUM_INITIAL_X = 10
-NUM_INIYIAL_THETA = 15
-NOISE_NUM = 15
+NUM_INITIAL_X = 10 #10
+NUM_INIYIAL_THETA = 15 #15
+NOISE_NUM = 15 #15
 CONTROL_STEP = 50
 INITIAL_GUESS_NUM = 1
-PLOT_NORMAL = 0
+PLOT_NORMAL = 1
 PLOT_NOISE = 1
 
-FILTER_MAX_U = 20000
+FILTER_MAX_U = 1000000
+
+RESULT_PATH = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/training_data/CartPole-NMPC/Random_also_noisedata_decayguess1_112500_ulimit5000/'
 
 INITIAL_STATE_GROUP = NUM_INIYIAL_THETA * NUM_INITIAL_X
 IDX_THETA = 2
@@ -30,7 +32,7 @@ U_DATA_NAME = 'u' + filename_idx # 400000: training data amount, 8: horizon leng
 X0_CONDITION_DATA_NAME = 'x0' + filename_idx # 400000-4: tensor size for conditioning data in training
 J_DATA_NAME = 'j'+ filename_idx
 FIG_NAME = 'DataCheck.png'
-RESULT_PATH = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/training_data/CartPole-NMPC/Random_also_noisedata_decayguess1.5_112500/'
+
 
 def load_tensor_from_file(file_path):
     # Load the tensor from the .pt file
@@ -66,42 +68,32 @@ if __name__ == "__main__":
 
     plt.figure(figsize=(20, 15))
     ##################################### x: guess = pos, plot all initila state group, control step, noise ##################
-    plt.subplot(3, 1, 1)
-    
-    # noise
-    if PLOT_NOISE == 1:
-        for j in range(INITIAL_STATE_GROUP):
-            for k in range(NOISE_NUM):
-                theta_noise_list_control_loop = []
-                for m in range(CONTROL_STEP):
-                    theta_noise_list_control_loop = theta_noise_list_control_loop + [tensor_x[IDX_NOISE_START + j * IDX_START_GROUP + k + NOISE_NUM*m, IDX_THETA].tolist()]
-                plt.plot(step, theta_noise_list_control_loop, 'm--')
-    # normal
-    if PLOT_NORMAL == 1:
-        for i in range(INITIAL_STATE_GROUP):
-            theta_list_control_loop = tensor_x[i*CONTROL_STEP:i*CONTROL_STEP + CONTROL_STEP, IDX_THETA].tolist()
-            plt.plot(step, theta_list_control_loop)
-    
-    plt.ylabel('theta (rad)')
-    plt.grid()
-    plt.title('guess=pos')
     
     
     ##################################### u: guess = pos, plot all initila state group, control step, noise ##################
-    plt.subplot(3, 1, 2)
     NumTooBig_noise_u = 0
     # # noise
     if PLOT_NOISE == 1:
         for j in range(INITIAL_STATE_GROUP):
             for k in range(NOISE_NUM):
+                theta_noise_list_control_loop = []
                 u_noise_list_control_loop = []
+                j_noise_list_control_loop = []
                 for m in range(CONTROL_STEP):
-                    u_noise_list_control_loop = u_noise_list_control_loop + [tensor_u[IDX_NOISE_START + j * IDX_START_GROUP + k + NOISE_NUM*m, 0,0].tolist()]
+                    nIdx = IDX_NOISE_START + j * IDX_START_GROUP + k + NOISE_NUM*m
+                    theta_noise_list_control_loop = theta_noise_list_control_loop + [tensor_x[nIdx, IDX_THETA].tolist()]
+                    u_noise_list_control_loop = u_noise_list_control_loop + [tensor_u[nIdx, 0,0].tolist()]
+                    j_noise_list_control_loop = j_noise_list_control_loop + [tensor_j[nIdx].tolist()]
                     if tensor_u[IDX_NOISE_START + j * IDX_START_GROUP + k + NOISE_NUM*m, 0,0].abs() > FILTER_MAX_U:
                         print("too big! (idx_group,idx_noise_num,control_step)=(",j,k,m,")=",tensor_u[IDX_NOISE_START + j * IDX_START_GROUP + k + NOISE_NUM*m, 0,0])
                         NumTooBig_noise_u += 1
                 if (max(abs(x) for x in u_noise_list_control_loop) < FILTER_MAX_U): # only plot meaningful u
+                    plt.subplot(3, 1, 1)
+                    plt.plot(step, theta_noise_list_control_loop, 'm--')
+                    plt.subplot(3, 1, 2)
                     plt.plot(step, u_noise_list_control_loop, 'm--')
+                    plt.subplot(3, 1, 3)
+                    plt.plot(step, j_noise_list_control_loop, 'm--')
                 else:
                     #print("(idx_group,idx_noise_num)=(",j,k,")","abs(u) too big=",max(u_noise_list_control_loop, key=abs))
                     pass
@@ -110,37 +102,38 @@ if __name__ == "__main__":
     # normal
     if PLOT_NORMAL == 1:
         for i in range(INITIAL_STATE_GROUP):
-            u_list_control_loop = tensor_u[i*CONTROL_STEP:i*CONTROL_STEP + CONTROL_STEP, 0, 0].tolist()
-            plt.plot(step, u_list_control_loop)
-        
+            nStartIdx = i*CONTROL_STEP
+            nEndIdx = nStartIdx + CONTROL_STEP
+            theta_list_control_loop = tensor_x[nStartIdx:nEndIdx, IDX_THETA].tolist()
+            u_list_control_loop = tensor_u[nStartIdx:nEndIdx, 0, 0].tolist()
+            j_list_control_loop = tensor_j[nStartIdx:nEndIdx].tolist()
+            
+            if (max(abs(x) for x in u_list_control_loop) < FILTER_MAX_U): # only plot meaningful u
+                plt.subplot(3, 1, 1)
+                plt.plot(step, theta_list_control_loop)
+                plt.subplot(3, 1, 2)
+                plt.plot(step, u_list_control_loop)
+                plt.subplot(3, 1, 3)
+                plt.plot(step, j_list_control_loop)
+            else:
+                #print("(idx_group,idx_noise_num)=(",j,k,")","abs(u) too big=",max(u_noise_list_control_loop, key=abs))
+                pass
     
     
+    plt.subplot(3, 1, 1)
+    plt.ylabel('theta')
+    plt.grid()
+    plt.title('result for random initial guess')
+    
+    plt.subplot(3, 1, 2)
     plt.ylabel('u')
     plt.grid()
-    plt.title('guess=pos')
-     
-     
-    ##################################### J: guess = pos, plot all initila state group, control step, noise ##################
+    plt.title('result for random initial guess')
+    
     plt.subplot(3, 1, 3)
-    
-    # noise
-    if PLOT_NOISE == 1:
-        for j in range(INITIAL_STATE_GROUP):
-            for k in range(NOISE_NUM):
-                j_noise_list_control_loop = []
-                for m in range(CONTROL_STEP):
-                    j_noise_list_control_loop = j_noise_list_control_loop + [tensor_j[IDX_NOISE_START + j * IDX_START_GROUP + k + NOISE_NUM*m].tolist()]
-                plt.plot(step, j_noise_list_control_loop, 'm--')
-    # normal
-    if PLOT_NORMAL == 1:
-        for i in range(INITIAL_STATE_GROUP):
-            j_list_control_loop = tensor_j[i*CONTROL_STEP:i*CONTROL_STEP + CONTROL_STEP].tolist()
-            plt.plot(step, j_list_control_loop)
-    
-    plt.ylabel('J')
+    plt.ylabel('j')
     plt.grid()
-    plt.title('guess=pos')   
-    
+    plt.title('result for random initial guess')
 
     
     plt.show()

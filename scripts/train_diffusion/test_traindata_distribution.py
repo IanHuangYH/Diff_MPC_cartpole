@@ -7,19 +7,27 @@ import seaborn as sns
 #matplotlib.use('Agg')
 
 
-base_dir = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/training_data/CartPole-NMPC/Random_also_noisedata_decayguess1_112500'
+base_dir = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/training_data/CartPole-NMPC/Random_also_noisedata_decayguess1_112500_ulimit6000'
 J_DATA_FILENAME = 'j_ini_10x15_noise_15_step_50_hor_64.pt'
 U_DATA_FILENAME = 'u_ini_10x15_noise_15_step_50_hor_64.pt'
 
 DO_LOG = 0
+ZSCROE = 1
 DATA_TYPE = 1 #0: j, 1: u
 
-data_load = torch.load(os.path.join(base_dir, U_DATA_FILENAME))
-data_load_np = data_load.numpy()
-if DATA_TYPE == 1:
+
+
+if DATA_TYPE == 0:
+    data_load = torch.load(os.path.join(base_dir, J_DATA_FILENAME))
+    data_load_np = data_load.numpy()
+    figure_name = 'j_distribution.png'
+elif DATA_TYPE == 1:
+    data_load = torch.load(os.path.join(base_dir, U_DATA_FILENAME))
+    data_load_np = data_load.numpy()
     Num = data_load_np.shape[0]
     hor = data_load_np.shape[1]
     data_load_np = data_load_np.reshape(Num*hor,1)
+    figure_name = 'u_distribution.png'
 
 
 
@@ -27,10 +35,12 @@ print('data load')
 
 if DO_LOG == 1:
     data_load_np = np.log(data_load_np)
-    data_load_np = 2*(data_load_np - data_load_np.min())/(data_load_np.max()-data_load_np.min())-1
-    # j_load_np = (j_load_np - np.mean(j_load_np))/np.std(j_load_np)
+    # data_load_np = 2*(data_load_np - data_load_np.min())/(data_load_np.max()-data_load_np.min())-1
+    # data_load_np = (data_load_np - np.mean(data_load_np))/np.std(data_load_np)
 
-
+if ZSCROE == 1:
+    data_load_np = (data_load_np - np.mean(data_load_np))/np.std(data_load_np)
+    
 # calculate feature
 mean_value = np.mean(data_load_np)
 median_value = np.median(data_load_np)
@@ -63,6 +73,6 @@ plt.legend()
 # Show the plot
 # plt.show()
 
-figure_name = 'u_distribution.png'
+
 plt.savefig(os.path.join(base_dir,figure_name))
 print("save")

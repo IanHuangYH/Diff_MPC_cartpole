@@ -63,10 +63,40 @@ for i in range(ini_guess_num):
 
 # other draw prepare
 step = np.linspace(0,CONTROL_STEP-1, CONTROL_STEP)
-PLOT_NUM = 6
-
-
+PLOT_NUM = 7
 plt.figure(figsize=(10, 8))
+
+legend_list = []
+# draw diffusion
+for i in range(num_modelread):
+    legend_name = 'diff_'+str(model_list[i])
+    legend_list.append(legend_name)
+    x_track_d = x_diff_all[i,:,:]
+    u_track_d = u_diff_all[i,:]
+    j_track_d = j_diff_all[i,:]
+
+    plt.subplot(PLOT_NUM, 1, 1)
+    plt.plot(step, x_track_d[:,0])
+    plt.grid()
+
+    plt.subplot(PLOT_NUM, 1, 2)
+    plt.plot(step, x_track_d[:,1])
+
+    plt.subplot(PLOT_NUM, 1, 3)
+    plt.plot(step, x_track_d[:,2])
+
+    plt.subplot(PLOT_NUM, 1, 4)
+    plt.plot(step, x_track_d[:,3])
+    
+    plt.subplot(PLOT_NUM, 1, 5)
+    plt.plot(step, x_track_d[:,4])
+
+    plt.subplot(PLOT_NUM, 1, 6)
+    plt.plot(step, u_track_d)
+
+    plt.subplot(PLOT_NUM, 1, 7)
+    plt.plot(step, j_track_d)
+
 for i in range(2):
     x_track_mpc = x_mpc_all[i,:,:]
     u_track_mpc = u_mpc_all[i,:]
@@ -95,45 +125,27 @@ for i in range(2):
     plt.ylabel('Ag Velocity (rad/s)')
     plt.xlabel('Control Step')
     plt.grid()
-
+    
     plt.subplot(PLOT_NUM, 1, 5)
+    plt.plot(step, x_track_mpc[:,4])
+    plt.ylabel('theta_star (rad)')
+    plt.xlabel('Control Step')
+    plt.grid()
+
+    plt.subplot(PLOT_NUM, 1, 6)
     plt.plot(step, u_track_mpc)
     plt.ylabel('Ctl Input (N)')
     plt.xlabel('Control Step')
     plt.grid()
 
-    plt.subplot(PLOT_NUM, 1, 6)
+    plt.subplot(PLOT_NUM, 1, 7)
     plt.plot(step, j_track_mpc)
     plt.ylabel('cost value')
     plt.xlabel('Control Step')
     plt.grid()
 
-legend_list = ['MPC_pos','MPC_neg']
-for i in range(num_modelread):
-    legend_name = 'diff_'+str(model_list[i])
-    legend_list.append(legend_name)
-    x_track_d = x_diff_all[i,:,:]
-    u_track_d = u_diff_all[i,:]
-    j_track_d = j_diff_all[i,:]
-
-    plt.subplot(PLOT_NUM, 1, 1)
-    plt.plot(step, x_track_d[:,0])
-    plt.grid()
-
-    plt.subplot(PLOT_NUM, 1, 2)
-    plt.plot(step, x_track_d[:,1])
-
-    plt.subplot(PLOT_NUM, 1, 3)
-    plt.plot(step, x_track_d[:,2])
-
-    plt.subplot(PLOT_NUM, 1, 4)
-    plt.plot(step, x_track_d[:,3])
-
-    plt.subplot(PLOT_NUM, 1, 5)
-    plt.plot(step, u_track_d)
-
-    plt.subplot(PLOT_NUM, 1, 6)
-    plt.plot(step, j_track_d)
+legend_list.append('MPC_pos')
+legend_list.append('MPC_neg')
     
 for i in range(1,PLOT_NUM+1):
     plt.subplot(PLOT_NUM, 1, i)

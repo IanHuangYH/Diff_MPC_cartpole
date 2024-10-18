@@ -285,7 +285,6 @@ class LogZScoreNormalizer(LogNormalizer):
             print("cannot normalize because data cannot do log")
             raise NotImplementedError
         
-        ## [ -1, 1 ] --> [ 0, 1 ]
         x = x*self.log_std + self.log_mean
         x = torch.exp(x)
 

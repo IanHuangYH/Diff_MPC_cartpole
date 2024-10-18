@@ -12,18 +12,23 @@ import multiprocessing
 # Attention: this py file can only set the initial range of position and theta, initial x_dot and theta_dot are always 0
 
 # modify
-SAVE_PATH =  "/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/training_data/CartPole-NMPC/Random_also_noisedata_decayguess1_112500"
+SAVE_PATH =  "/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/training_data/CartPole-NMPC/Random_also_noisedata_decayguess1_112500_ulimit5000"
 CONTROL_STEPS = 50
 NUM_INITIAL_X = 10
 NUM_INIYIAL_THETA = 15
 NUM_NOISY_DATA =15
 B_RANDOMINIGUESS_FOR_NOISE = True
 INITIAL_GUESS_DECAY = 1
+B_ULIMIT = True
+
 
 
 # Random range for initialguess
 MAX_U_INIGUESS = 4500
 MIN_U_INIGUESS = -4500
+
+if B_ULIMIT == True:
+    ULIMIT = 6000
 
 # data range
 POS_MIN = -3
@@ -153,17 +158,21 @@ def MPC_Solve( system_update, system_dynamic, x0:np.array, initial_guess_x:float
     while retries < nMaxGuess:
         try:
             # casadi_Opti
-            optimizer_normal = ca.Opti()
+            optimizer = ca.Opti()
             
             ##### normal mpc #####  
             # x and u mpc prediction along N
-            X_pre = optimizer_normal.variable(num_state, horizon + 1) 
-            U_pre = optimizer_normal.variable(1, horizon)
+            X_pre = optimizer.variable(num_state, horizon + 1) 
+            U_pre = optimizer.variable(1, horizon)
             # set intial guess
-            optimizer_normal.set_initial(X_pre, initial_guess_x)
-            optimizer_normal.set_initial(U_pre, initial_guess_u)
+            optimizer.set_initial(X_pre, initial_guess_x)
+            optimizer.set_initial(U_pre, initial_guess_u)
 
-            optimizer_normal.subject_to(X_pre[:, 0] == x0)  # starting state
+            optimizer.subject_to(X_pre[:, 0] == x0)  # starting state
+            
+            if B_ULIMIT == True:
+                optimizer.subject_to(U_pre <=ULIMIT)
+                optimizer.subject_to(-ULIMIT <= U_pre)
 
             # cost 
             cost = 0
@@ -174,17 +183,17 @@ def MPC_Solve( system_update, system_dynamic, x0:np.array, initial_guess_x:float
             # state cost
             for k in range(0,horizon-1):
                 x_next = system_update(system_dynamic,ts,X_pre[:, k],U_pre[:, k])
-                optimizer_normal.subject_to(X_pre[:, k + 1] == x_next)
+                optimizer.subject_to(X_pre[:, k + 1] == x_next)
                 cost += Q_cost[0,0]*X_pre[0, k+1]**2 + Q_cost[1,1]*X_pre[1, k+1]**2 + Q_cost[2,2]*X_pre[2, k+1]**2 + Q_cost[3,3]*X_pre[3, k+1]**2 + Q_cost[4,4]*X_pre[4, k+1]**2 + R_cost * U_pre[:, k]**2
 
             # terminal cost
             x_terminal = system_update(system_dynamic,ts,X_pre[:, horizon-1],U_pre[:, horizon-1])
-            optimizer_normal.subject_to(X_pre[:, horizon] == x_terminal)
+            optimizer.subject_to(X_pre[:, horizon] == x_terminal)
             cost += P_cost[0,0]*X_pre[0, horizon]**2 + P_cost[1,1]*X_pre[1, horizon]**2 + P_cost[2,2]*X_pre[2, horizon]**2 + P_cost[3,3]*X_pre[3, horizon]**2 + P_cost[4,4]*X_pre[4, horizon]**2 + R_cost * U_pre[:, horizon-1]**2
 
-            optimizer_normal.minimize(cost)
-            optimizer_normal.solver('ipopt',opts_setting)
-            sol = optimizer_normal.solve()
+            optimizer.minimize(cost)
+            optimizer.solver('ipopt',opts_setting)
+            sol = optimizer.solve()
             X_sol = sol.value(X_pre)
             U_sol = sol.value(U_pre)
             Cost_sol = sol.value(cost)
@@ -193,13 +202,13 @@ def MPC_Solve( system_update, system_dynamic, x0:np.array, initial_guess_x:float
             print(f"Error: {str(e)}")
             if retries<1:
                 if x0[2] <= np.pi: 
-                    initial_guess_x = -5
-                    initial_guess_u = -1000
+                    initial_guess_x = 0
+                    initial_guess_u = -10000
                 else:
                     initial_guess_x = 5
                     initial_guess_u = 1000
             else:
-                initial_guess_u, initial_guess_x = GenerateRandomInitialGuess(MIN_U_INIGUESS, MAX_U_INIGUESS)
+                initial_guess_u, initial_guess_x = GenerateRandomInitialGuess(-1000, 1000)
             print("retries:",retries,", modified initial guess as u", initial_guess_u)
             
             retries += 1

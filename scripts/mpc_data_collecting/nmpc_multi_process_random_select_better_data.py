@@ -43,6 +43,16 @@ PATH_U_BEST_NOISE = os.path.join(SAVE_PATH, 'u_best_noise.pt')
 PATH_J_BEST_NOISE = os.path.join(SAVE_PATH, 'j_best_noise.pt')
 
 
+# data (x,u) collecting (saved in PT file)
+NUM_GROUP_INI_GUESS = FIND_GLOBAL_NUM*NUM_INITIAL_X*NUM_INIYIAL_THETA
+
+SIZE_FINALNOR_CANDIDATE_DATA = NUM_GROUP_INI_GUESS*(CONTROL_STEPS)
+SIZE_FINALNOR_DATA_SELECT = int(SIZE_FINALNOR_CANDIDATE_DATA/FIND_GLOBAL_NUM)
+SIZE_FINALNOISE_CANDIDATE_DATA = NUM_INITIAL_X*NUM_INIYIAL_THETA*(CONTROL_STEPS)*NUM_NOISY_DATA
+SIZE_NOISE_SELECT_EACH_STATE = int(NUM_NOISY_DATA/FIND_GLOBAL_NUM)
+SIZE_FINALNOISE_DATA_SELECT = SIZE_FINALNOR_DATA_SELECT * SIZE_NOISE_SELECT_EACH_STATE
+
+
 
 # Random range for initialguess
 MAX_U_INIGUESS = 4500
@@ -77,7 +87,7 @@ IDX_THETA = 2
 IDX_THETA_RED = 4
 
 # trainind data files name
-filename_idx = '_ini_'+str(NUM_INITIAL_X)+'x'+str(NUM_INIYIAL_THETA)+'_noise_'+str(NUM_NOISY_DATA)+'_step_'+str(CONTROL_STEPS)+'_hor_'+str(HOR)+'.pt'
+filename_idx = '_ini_'+str(NUM_INITIAL_X)+'x'+str(NUM_INIYIAL_THETA)+'_noise_'+str(SIZE_NOISE_SELECT_EACH_STATE)+'_step_'+str(CONTROL_STEPS)+'_hor_'+str(HOR)+'.pt'
 U_DATA_NAME = 'u' + filename_idx # 400000: training data amount, 8: horizon length, 1:channels --> 400000-8-1: tensor size for data trainig 
 X0_CONDITION_DATA_NAME = 'x0' + filename_idx # 400000-4: tensor size for conditioning data in training
 J_DATA_NAME = 'j'+ filename_idx
@@ -265,7 +275,7 @@ def GenerateNoiseCandForEachStep( nGuess, x0_normal, u0_normal, idx_group_of_con
     x_noise = np.zeros((nDataNumForOneStep, NUM_STATE))
     u_noise = np.zeros((nDataNumForOneStep, HOR, 1))
     j_noise = np.zeros((nDataNumForOneStep))
-    for idx_Noiseth in range( DIM_NOISE_SELECT ):
+    for idx_Noiseth in range( SIZE_NOISE_SELECT_EACH_STATE ):
         if (idx_control_step == 0):
             noise = np.random.normal(NOISE_MEAN, NOISE_SD, size = (1,2))
             noisy_state = x0_normal.numpy() + [noise[0,0], 0, noise[0,1],0,0]
@@ -342,9 +352,9 @@ def concat_iniguess_from_MPCSol(u_sol, x_sol):
 
 def FindBestRollOutFromNormalCandidate(x_candidate:list, u_candidate:list, j_candidate:list, nGroup, nIniGuess, nControlStep):
     nGuess_ControlStep = nIniGuess * nControlStep
-    Final_x = torch.zeros((SIZE_NOR_DATA_SELECT, NUM_STATE))
-    Final_u = torch.zeros((SIZE_NOR_DATA_SELECT, HOR, 1))
-    Final_j = torch.zeros((SIZE_NOR_DATA_SELECT,))
+    Final_x = torch.zeros((SIZE_FINALNOR_DATA_SELECT, NUM_STATE))
+    Final_u = torch.zeros((SIZE_FINALNOR_DATA_SELECT, HOR, 1))
+    Final_j = torch.zeros((SIZE_FINALNOR_DATA_SELECT,))
 
     for i in range(nGroup):
         nCurStartIdx = i*nGuess_ControlStep
@@ -370,10 +380,10 @@ def FindBestRollOutFromNormalCandidate(x_candidate:list, u_candidate:list, j_can
 
 def FindBestRollOutFromNoisyCandidate(x_candidate:list, u_candidate:list, j_candidate:list, nGroup, nIniGuess, nControlStep, nNumNoiseCandidate):
     nGuess_ControlStep = nNumNoiseCandidate * nControlStep
-    nNumNoiseForEachStep = nNumNoiseCandidate/nIniGuess
-    Final_x = torch.zeros((SIZE_NOISE_DATA_SELECT, NUM_STATE))
-    Final_u = torch.zeros((SIZE_NOISE_DATA_SELECT, HOR, 1))
-    Final_j = torch.zeros((SIZE_NOISE_DATA_SELECT,))
+    nNumNoiseForEachStep = int(nNumNoiseCandidate/nIniGuess)
+    Final_x = torch.zeros((SIZE_FINALNOISE_DATA_SELECT, NUM_STATE))
+    Final_u = torch.zeros((SIZE_FINALNOISE_DATA_SELECT, HOR, 1))
+    Final_j = torch.zeros((SIZE_FINALNOISE_DATA_SELECT,))
     
     for idx_group in range(nGroup):
         for idx_controlstep in range(nControlStep):
@@ -381,12 +391,17 @@ def FindBestRollOutFromNoisyCandidate(x_candidate:list, u_candidate:list, j_cand
                 nCurIdx = idx_group * nGuess_ControlStep + idx_controlstep * nNumNoiseCandidate + idx_Noise * nIniGuess
                 nBestIdx = nCurIdx
                 for idx_NoiseCandidate in range(0,nIniGuess-1):
-                    if( j_candidate[nCurIdx+idx_NoiseCandidate + 1] < j_candidate[nCurIdx+idx_NoiseCandidate] ):
+                    if( j_candidate[nCurIdx+idx_NoiseCandidate + 1] < j_candidate[nBestIdx] ):
                         nBestIdx = nCurIdx+idx_NoiseCandidate + 1
                 nIdx_Final = idx_group * nControlStep * nNumNoiseForEachStep + idx_controlstep * nNumNoiseForEachStep + idx_Noise 
-                Final_x[nIdx_Final,:] = torch.from_numpy(np.array(x_candidate[nIdx_Final]))
-                Final_u[nIdx_Final,:,:] = torch.from_numpy(np.array(u_candidate[nIdx_Final]))
-                Final_j[nIdx_Final] = torch.from_numpy(np.array(j_candidate[nIdx_Final]))
+                Final_x[nIdx_Final,:] = torch.from_numpy(np.array(x_candidate[nBestIdx]))
+                Final_u[nIdx_Final,:,:] = torch.from_numpy(np.array(u_candidate[nBestIdx]))
+                Final_j[nIdx_Final] = torch.from_numpy(np.array(j_candidate[nBestIdx]))
+                
+    # save
+    torch.save(Final_x, PATH_X_BEST_NOISE)
+    torch.save(Final_u, PATH_U_BEST_NOISE)
+    torch.save(Final_j, PATH_J_BEST_NOISE)
                 
     return Final_u, Final_x, Final_j
 
@@ -394,30 +409,26 @@ def FindBestRollOutFromNoisyCandidate(x_candidate:list, u_candidate:list, j_cand
 
 ######################################################################################################################
 # ##### data collecting loop #####
-# data (x,u) collecting (saved in PT file)
-NUM_GROUP_INI_GUESS = FIND_GLOBAL_NUM*num_datagroup
-SIZE_NOR_CANDIDATE_DATA = NUM_GROUP_INI_GUESS*(CONTROL_STEPS)
-SIZE_NOR_DATA_SELECT = int(SIZE_NOR_CANDIDATE_DATA/FIND_GLOBAL_NUM)
 
-DIM_NOISE_SELECT = int(NUM_NOISY_DATA/FIND_GLOBAL_NUM)
-SIZE_NOISE_DATA_SELECT = SIZE_NOR_DATA_SELECT * DIM_NOISE_SELECT
-x_nor_candidate_shape = (SIZE_NOR_CANDIDATE_DATA,NUM_STATE)
-u_nor_candidate_shape = (SIZE_NOR_CANDIDATE_DATA,HOR,1)
-j_nor_candidate_shape = (SIZE_NOR_CANDIDATE_DATA)
-x_normal_shape = (SIZE_NOR_DATA_SELECT,NUM_STATE)
-u_normal_shape = (SIZE_NOR_DATA_SELECT,HOR,1)
-j_normal_shape = (SIZE_NOR_DATA_SELECT)
-x_noise_shape = (SIZE_NOISE_DATA_SELECT,NUM_STATE)
-u_noise_shape = (SIZE_NOISE_DATA_SELECT,HOR,1)
-j_noise_shape = (SIZE_NOISE_DATA_SELECT)
-
+x_nor_candidate_shape = (SIZE_FINALNOR_CANDIDATE_DATA,NUM_STATE)
+u_nor_candidate_shape = (SIZE_FINALNOR_CANDIDATE_DATA,HOR,1)
+j_nor_candidate_shape = (SIZE_FINALNOR_CANDIDATE_DATA)
+x_normal_shape = (SIZE_FINALNOR_DATA_SELECT,NUM_STATE)
+u_normal_shape = (SIZE_FINALNOR_DATA_SELECT,HOR,1)
+j_normal_shape = (SIZE_FINALNOR_DATA_SELECT)
+x_noise_candidate_shape = (SIZE_FINALNOISE_CANDIDATE_DATA,NUM_STATE)
+u_noise_candidate_shape = (SIZE_FINALNOISE_CANDIDATE_DATA,HOR,1)
+j_noise_candidate_shape = (SIZE_FINALNOISE_CANDIDATE_DATA)
+x_noise_shape = (SIZE_FINALNOISE_DATA_SELECT,NUM_STATE)
+u_noise_shape = (SIZE_FINALNOISE_DATA_SELECT,HOR,1)
+j_noise_shape = (SIZE_FINALNOISE_DATA_SELECT)
 
 
 def main():
     MAX_CORE_CPU = 24
     start_time = time.time()
     print("data save path = ",SAVE_PATH,"\n")
-    print("B_RANDOMINIGUESS_FOR_NOISE=",B_RANDOMINIGUESS_FOR_NOISE,"\n")
+    print("start")
     with Manager() as manager:
         if B_IFNOR_CAND_FINISHED == 0:
             print("start prepare shared memory \n")
@@ -457,7 +468,7 @@ def main():
             
             
         ######################################## step 2, select best data from normal #####################
-         
+        print("step 1 finished, get normal candidate data") 
         if (B_IFNOR_CAND_FINISHED == 1 and B_IFNOR_SELECT_FINISHED == 0):
             x_cand_nor = torch.load(PATH_X_CAN_NOR)
             x_nor_candidate_shared_memory = x_cand_nor.tolist()
@@ -467,44 +478,46 @@ def main():
             j_nor_candidate_shared_memory = j_cand_nor.tolist()
         # find best normal data
         if B_IFNOR_SELECT_FINISHED == 0:
-            u_nor_best, x_nor_bset, j_nor_best = FindBestRollOutFromNormalCandidate(x_nor_candidate_shared_memory, u_nor_candidate_shared_memory, j_nor_candidate_shared_memory, 
+            u_nor_best, x_nor_best, j_nor_best = FindBestRollOutFromNormalCandidate(x_nor_candidate_shared_memory, u_nor_candidate_shared_memory, j_nor_candidate_shared_memory, 
                                                                             num_datagroup, FIND_GLOBAL_NUM, CONTROL_STEPS)
         
         ####################################### step 3, generate candidate noisy data #########################
-        
+        print("step 2 finished, get normal select data") 
         if B_IFNOR_SELECT_FINISHED == 1:
-            x_nor_bset = torch.load(PATH_X_BEST_NOR)
+            x_nor_best = torch.load(PATH_X_BEST_NOR)
             u_nor_best = torch.load(PATH_U_BEST_NOR)
             j_nor_best = torch.load(PATH_J_BEST_NOR)
-            
-        # prepare noisy data argument
-        x_noise_shared_memory = manager.list([[0.0] * x_noise_shape[1]] * x_noise_shape[0])
-        u_noise_shared_memory = manager.list([[[0.0] for _ in range(u_noise_shape[1])] for _ in range(u_noise_shape[0])])
-        j_noise_shared_memory = manager.list([0.0] * j_noise_shape)
         
-        argument_ForNoisyCandidate = []
-        for turn in range(num_datagroup):
-            for idx_controlstep in range(CONTROL_STEPS):
-                nIdxSinglePointFromNormal = turn*CONTROL_STEPS + idx_controlstep
-                x0_normal = x_nor_bset[nIdxSinglePointFromNormal,:]
-                u0_normal = u_nor_best[nIdxSinglePointFromNormal,0,0]
-                idx_group_of_control_step = turn
-                
-                argument_ForNoisyCandidate.append((FIND_GLOBAL_NUM, x0_normal, u0_normal, idx_group_of_control_step, u_noise_shared_memory, j_noise_shared_memory, x_noise_shared_memory, idx_controlstep))
-        
-        # generate noisy data candidate
-        with Pool(processes=MAX_CORE_CPU) as pool:
-            pool.starmap(GenerateNoiseCandForEachStep, argument_ForNoisyCandidate)
+        if B_IFNOISE_CAND_FINISHED == 0:
+            # prepare noisy data argument
+            x_noise_shared_memory = manager.list([[0.0] * x_noise_candidate_shape[1]] * x_noise_candidate_shape[0])
+            u_noise_shared_memory = manager.list([[[0.0] for _ in range(u_noise_candidate_shape[1])] for _ in range(u_noise_candidate_shape[0])])
+            j_noise_shared_memory = manager.list([0.0] * j_noise_candidate_shape)
             
-        # save noise candidate
-        x_cand_noise = torch.from_numpy(np.array(x_noise_shared_memory))
-        u_cand_noise = torch.from_numpy(np.array(u_noise_shared_memory))
-        j_cand_noise = torch.from_numpy(np.array(j_noise_shared_memory))
-        torch.save(x_cand_noise, PATH_X_CAN_NOISE)
-        torch.save(u_cand_noise, PATH_U_CAN_NOISE)
-        torch.save(j_cand_noise, PATH_J_CAN_NOISE)
+            argument_ForNoisyCandidate = []
+            for turn in range(num_datagroup):
+                for idx_controlstep in range(CONTROL_STEPS):
+                    nIdxSinglePointFromNormal = turn*CONTROL_STEPS + idx_controlstep
+                    x0_normal = x_nor_best[nIdxSinglePointFromNormal,:]
+                    u0_normal = u_nor_best[nIdxSinglePointFromNormal,0,0]
+                    idx_group_of_control_step = turn
+                    
+                    argument_ForNoisyCandidate.append((FIND_GLOBAL_NUM, x0_normal, u0_normal, idx_group_of_control_step, u_noise_shared_memory, j_noise_shared_memory, x_noise_shared_memory, idx_controlstep))
+            
+            # generate noisy data candidate
+            with Pool(processes=MAX_CORE_CPU) as pool:
+                pool.starmap(GenerateNoiseCandForEachStep, argument_ForNoisyCandidate)
+            
+            # save noise candidate
+            x_cand_noise = torch.from_numpy(np.array(x_noise_shared_memory))
+            u_cand_noise = torch.from_numpy(np.array(u_noise_shared_memory))
+            j_cand_noise = torch.from_numpy(np.array(j_noise_shared_memory))
+            torch.save(x_cand_noise, PATH_X_CAN_NOISE)
+            torch.save(u_cand_noise, PATH_U_CAN_NOISE)
+            torch.save(j_cand_noise, PATH_J_CAN_NOISE)
             
         ############################################### step 4. select best noise data ############################################################
+        print("step 3 finished, get noise candidate data") 
         if (B_IFNOISE_CAND_FINISHED == 1 and B_IFNOISE_SELECT_FINISHED == 0):
             x_cand_noise = torch.load(PATH_X_CAN_NOISE)
             x_noise_shared_memory = x_cand_noise.tolist()
@@ -513,26 +526,29 @@ def main():
             j_cand_noise = torch.load(PATH_J_CAN_NOISE)
             j_noise_shared_memory = j_cand_noise.tolist()
         # find best noisy data
-        u_noisy_best, x_noisy_bset, j_noisy_best = FindBestRollOutFromNoisyCandidate(x_noise_shared_memory, u_noise_shared_memory, j_noise_shared_memory, 
-                                                                                num_datagroup, FIND_GLOBAL_NUM, CONTROL_STEPS)
+        u_noise_best, x_noise_bset, j_noise_best = FindBestRollOutFromNoisyCandidate(x_noise_shared_memory, u_noise_shared_memory, j_noise_shared_memory, 
+                                                                                num_datagroup, FIND_GLOBAL_NUM, CONTROL_STEPS, NUM_NOISY_DATA)
                 
-        
+        if (B_IFNOISE_SELECT_FINISHED==1):
+            x_noise_bset = torch.load(PATH_X_BEST_NOISE)
+            u_noise_best = torch.load(PATH_U_BEST_NOISE)
+            j_noise_best = torch.load(PATH_J_BEST_NOISE)
 
         # show the normal
         print(f'normal u -- {u_nor_best[0,:,0]}')
-        print(f'normal x -- {x_noise_shared_memory[0,:]}')
+        print(f'normal x -- {x_nor_best[0,:]}')
 
         ##### data combing #####
         # u combine u_normal + u_noisy
-        u_training_data = torch.cat((u_nor_best, u_noisy_best), dim=0)
+        u_training_data = torch.cat((u_nor_best, u_noise_best), dim=0)
         print(f'u_training_data -- {u_training_data.size()}')
 
         # x0 combine x_normal + x_noisy
-        x0_conditioning_data = torch.cat((x_nor_bset, x_noisy_bset), dim=0)
+        x0_conditioning_data = torch.cat((x_nor_best, x_noise_bset), dim=0)
         print(f'x0_conditioning_data -- {x0_conditioning_data.size()}')
 
         # J combine j_normal + j_noisy
-        J_training_data = torch.cat((j_nor_best, j_noisy_best), dim=0)
+        J_training_data = torch.cat((j_nor_best, j_noise_best), dim=0)
 
         # data saving
         torch.save(u_training_data, os.path.join(SAVE_PATH, U_DATA_NAME))
