@@ -19,39 +19,84 @@ from torch_robotics.torch_utils.seed import fix_random_seed
 from torch_robotics.torch_utils.torch_timer import TimerCUDA
 from torch_robotics.torch_utils.torch_utils import get_torch_device, freeze_torch_model_params
 
-from multiprocessing import Pool
+from multiprocessing import Pool, Manager
 import multiprocessing
+import time
+import torch.multiprocessing as mp
 
-# modify
-DATASET = 'NMPC_UJ_Dataset'
-J_NORMALIZER = 'GaussianNormalizer' #GaussianNormalizer, LimitsNormalizer, LogMinMaxNormalizer, LogZScoreNormalizer, OnlyLogNormalizer
-UX_NORMALIZER = 'GaussianNormalizer' 
-MODEL_FOLDER = 'nmpc_batch_256_random6000_zscore_xu_logzscore_j_selectdata_float64'
-DATA_LOAD_FOLER = 'NN'
 
-B_PEDICT_J_BYMODEL = 0
+# diffusion modify
+DIFF_MODEL_FOLDER = 'nmpc_batch_4096_random112500_zscroe_xu_decay1'
+DIFF_MODEL_CHECKPOINT = 8000
+DIFF_DATA_LOAD_FOLER = 'Random_also_noisedata_decayguess1_112500'
+DIFF_DATASET_CLASS = 'NMPC_Dataset'
+DIFF_INITILA_X = 10 #10
+DIFF_INITIAL_THETA = 15 #15
+DIFF_NOISE_NUM = 15 #15
+DIFF_J_NORMALIZER = 'GaussianNormalizer' #GaussianNormalizer, LimitsNormalizer, LogMinMaxNormalizer, LogZScoreNormalizer, OnlyLogNormalizer
+DIFF_UX_NORMALIZER = 'GaussianNormalizer' 
+
+# NN modify
+NN_MODEL_FOLDER = 'NN_120000_random_decayguess1'
+NN_DATA_LOAD_FOLER = 'Random_also_noisedata_decayguess1_112500' # NN
+NN_DATASET_CLASS = 'InputsDataset'
+NN_INITILA_X = 10 #10, 5
+NN_INITIAL_THETA = 15 #15, 6
+NN_NOISE_NUM = 15 #15, 3
+NN_J_NORMALIZER = 'LimitsNormalizer' #GaussianNormalizer, LimitsNormalizer, LogMinMaxNormalizer, LogZScoreNormalizer, OnlyLogNormalizer
+NN_UX_NORMALIZER = 'LimitsNormalizer' 
+
+# MPC_modify
+MPC_U_RANGE = np.array([-4500.0,4500])
+
+# Common modify
+CONTROL_STEP = 50
+HOR = 64
+NUM_FIND_GLOBAL = 5
+NUM_MONTECARLO = 100
+DEVICE = 'cpu'
+NUM_CONTROLLER = 4
+B_ISSAVE = 0
+
+# monte carlo initial state sample range
+INITIAL_X_RANGE = np.array([-3,3])
+INITIAL_THETA_RANGE = np.array([1.8,4.4])
+
+# result filename
+RESULT_SAVED_PATH = os.path.join('/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/model_performance_saving',DIFF_MODEL_FOLDER,str(DIFF_MODEL_CHECKPOINT))
+COST_ALL_FILENAME_SAVE = 'analysis_all_method_cost_all.npy'
+COST_MEAN_FILENAME_SAVE = 'analysis_all_method_cost_mean.npy'
+COST_STD_FILENAME_SAVE = 'analysis_all_method_cost_std.npy'
+TIME_ALL_FILENAME_SAVE = 'analysis_all_method_time_all.npy'
+TIME_MEAN_FILENAME_SAVE = 'analysis_all_method_time_mean.npy'
+TIME_STD_FILENAME_SAVE = 'analysis_all_method_time_std.npy'
+
+############################################################################################################################################
+
 # path
-RESULT_SAVED_PATH = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/model_performance_saving/'
-MODEL_SAVED_PATH = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/data_trained_models/'+MODEL_FOLDER
-DATA_LOAD_PATH = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/training_data/CartPole-NMPC/'+DATA_LOAD_FOLER
+DIFF_MODEL_PATH = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/data_trained_models/'+DIFF_MODEL_FOLDER+'/'+str(DIFF_MODEL_CHECKPOINT)
+DIFF_DATA_LOAD_PATH = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/training_data/CartPole-NMPC/'+DIFF_DATA_LOAD_FOLER
+NN_MODEL_PATH = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/data_trained_models/'+NN_MODEL_FOLDER
+NN_DATA_LOAD_PATH = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/training_data/CartPole-NMPC/'+NN_DATA_LOAD_FOLER
+NN_SUB_DIR = os.path.join('CartPole-NMPC',NN_DATA_LOAD_FOLER)
 
+# idx
+NUM_ONE_METHODGRP = CONTROL_STEP * NUM_MONTECARLO
+
+# setting
 OPT_SETTING = {'ipopt.max_iter':20000, 'ipopt.acceptable_tol':1e-8, 'ipopt.acceptable_obj_change_tol':1e-6, 'ipopt.print_level': 0, 'print_time': 0, 'ipopt.sb': 'yes'}
 
-INITILA_X = 5 #10
-INITIAL_THETA = 6 #15
-CONTROL_STEP = 50
-NOISE_NUM = 3 #15
-HOR = 64
-
-NUM_FIND_GLOBAL = 5
 # fix_random_seed(40)
-
 # Data Name Setting
-filename_idx = '_ini_'+str(INITILA_X)+'x'+str(INITIAL_THETA)+'_noise_'+str(NOISE_NUM)+'_step_'+str(CONTROL_STEP)+'_hor_'+str(HOR)+'.pt'
-X0_CONDITION_DATA_NAME = 'x0' + filename_idx
-U_DATA_FILENAME = 'u' + filename_idx
-J_DATA_FILENAME = 'j' + filename_idx
+Diff_filename_idx = '_ini_'+str(DIFF_INITILA_X)+'x'+str(DIFF_INITIAL_THETA)+'_noise_'+str(DIFF_NOISE_NUM)+'_step_'+str(CONTROL_STEP)+'_hor_'+str(HOR)+'.pt'
+DIFF_X0_CONDITION_DATA_NAME = 'x0' + Diff_filename_idx
+DIFF_U_DATA_FILENAME = 'u' + Diff_filename_idx
+DIFF_J_DATA_FILENAME = 'j' + Diff_filename_idx
 
+NN_filename_idx = '_ini_'+str(NN_INITILA_X)+'x'+str(NN_INITIAL_THETA)+'_noise_'+str(NN_NOISE_NUM)+'_step_'+str(CONTROL_STEP)+'_hor_'+str(HOR)+'.pt'
+NN_X0_CONDITION_DATA_NAME = 'x0_4DOF_' + NN_filename_idx
+NN_U_DATA_FILENAME = 'u' + NN_filename_idx
+NN_J_DATA_FILENAME = 'j' + NN_filename_idx
 
 # dynamic parameter
 M_CART = 2.0
@@ -69,41 +114,10 @@ PI_UNDER_1 = 1/np.pi
 
 # Sample parameters
 TS = 0.01
-X0_RANGE = np.array([-0.5, 0.5])
-THETA0_RANGE = np.array([3*np.pi/4, 5*np.pi/4])
-
 NUM_STATE = 5
-
-DEBUG = 1
-
 WEIGHT_GUIDANC = 0.01 # non-conditioning weight
-X0_IDX = 150 # range:[0,199] 20*20 data 
 
-
-
-RESULT_NAME = MODEL_FOLDER
-RESULT_FOLDER = os.path.join(RESULT_SAVED_PATH, RESULT_NAME)
-
-
-class ControllerManager:
-    def __init__(self, controller: MPCBasedController):
-        # Initially set the strategy
-        self._strategy = controller
-        
-    def set_strategy(self, controller: MPCBasedController):
-        # Dynamically change the strategy
-        self._strategy = controller
-
-    def do_something(self, data):
-        # Delegate behavior to the strategy
-        self._strategy.execute(data)
-
-class MPCBasedController(ABC):
-    @abstractmethod
-    def SolveUandGetCost(self, ):
-        pass
-
-
+################################################################################################################################################
 class AMPCNet_Inference(nn.Module):
     def __init__(self, input_size, output_size):
         super(AMPCNet_Inference, self).__init__()
@@ -113,9 +127,7 @@ class AMPCNet_Inference(nn.Module):
         self.hidden3 = nn.Linear(50, 50)         # Third hidden layer with 50 neurons
         self.output = nn.Linear(50, output_size) # Output layer
 
-    def forward(self, x):
-        # print(x.dtype)  # Check the data type of the input tensor
-        # print(self.hidden1.weight.dtype)  # Check the data type of the Linear layer's weights
+    def forward(self, x, horizon):
         # Forward pass through the network with the specified activations
         x = x.to(torch.float32) 
         x = torch.tanh(self.hidden1(x))          # Tanh activation for first hidden layer
@@ -124,9 +136,230 @@ class AMPCNet_Inference(nn.Module):
         x = self.output(x)                       # Linear activation (no activation function) for the output layer
 
         # reshape the output
-        x = x.view(1, 8, 1) # 512(batch size)*8*1
+        x = x.view(1, horizon, 1) # 1*horizon*1
 
         return x
+
+class MPCBasedController(ABC):
+    @abstractmethod
+    def SolveUThenGetCost(self:np.array, x_cur_red:np.array, x_cur_clean:np.array, Q:np.array, R:np.array, P:np.array, Hor:int):
+        # x_cur_red, x_cur_clean are 1D array with 5 and 4 seperately
+        pass
+
+class DiffusionController(MPCBasedController):
+    def __init__(self, device: str, 
+                 model_dir: str, train_data_load_path: str,
+                 j_filename, u_filename, x0_filename,
+                 diffusionDatasetClass: str):
+        device = get_torch_device(device)
+        tensor_args = {'device': device, 'dtype': torch.float32}
+        args = load_params_from_yaml(os.path.join(model_dir, "args.yaml"))
+        args.pop('j_filename', None)
+        args.pop('u_filename', None)
+        args.pop('x0_filename', None)
+        args.pop('train_data_load_path', None)
+
+        #################################################################
+        # Load dataset
+        train_subset, train_dataloader, val_subset, val_dataloader = get_dataset(
+            dataset_class=diffusionDatasetClass,
+            j_normalizer=DIFF_J_NORMALIZER,
+            train_data_load_path = train_data_load_path,
+            j_filename=j_filename,
+            u_filename = u_filename,
+            x0_filename = x0_filename,
+            ux_normalizer = DIFF_UX_NORMALIZER,
+            **args,
+            tensor_args=tensor_args
+        )
+        self.m_dataset = train_subset.dataset
+        
+        ####################################################################
+        # Load model
+        # diffusion setting
+        # Load prior model
+        diffusion_configs = dict(
+        variance_schedule=args['variance_schedule'],
+        n_diffusion_steps=args['n_diffusion_steps'],
+        predict_epsilon=args['predict_epsilon'],
+        )
+        unet_configs = dict(
+        state_dim=self.m_dataset.state_dim,
+        n_support_points=self.m_dataset.n_support_points,
+        unet_input_dim=args['unet_input_dim'],
+        dim_mults=UNET_DIM_MULTS[args['unet_dim_mults_option']],
+        )
+        diffusion_model = get_model(
+        model_class=args['diffusion_model_class'],
+        model=ConditionedTemporalUnet(**unet_configs),
+        tensor_args=tensor_args,
+        **diffusion_configs,
+        **unet_configs
+        )
+        # 'ema_model_current_state_dict.pth'
+        diffusion_model.load_state_dict(
+        torch.load(os.path.join(model_dir, 'checkpoints', 'ema_model_current_state_dict.pth' if args['use_ema'] else 'model_current_state_dict.pth'),
+        map_location=tensor_args['device'])
+        )
+        diffusion_model.eval()
+        model = diffusion_model
+        self.m_model = torch.compile(model)
+        self.m_model.eval()
+        
+        self.m_device = device
+        
+    def SolveUThenGetCost(self, x_cur_red:np.array, x_cur_clean:np.array, Q:np.array, R:np.array, P:np.array, Hor:int ):
+        FindGlobal_list = []
+        for j in range(NUM_FIND_GLOBAL):
+            tensor = torch.randn(1, Hor, 1)  # Create a 1x64x1 tensor
+            FindGlobal_list.append([0, tensor])
+        x0_tensor = torch.tensor(x_cur_clean).to(self.m_device)
+        x0_strd = self.m_dataset.normalize_condition(x0_tensor)
+        x0_strd = x0_strd.unsqueeze(0)
+        
+        starttime = time.time()
+        for j in range(NUM_FIND_GLOBAL):
+            with torch.no_grad():
+                u_normalized_iters = self.m_model.run_CFG(
+                    x0_strd, None, WEIGHT_GUIDANC,
+                    n_samples=1, horizon=Hor,
+                    return_chain=True,
+                    sample_fn=ddpm_cart_pole_sample_fn,
+                    n_diffusion_steps_without_noise=5,
+                )
+                u_iters = self.m_dataset.unnormalize_states(u_normalized_iters[:,:,0:Hor,:])
+                u_final_iter_candidate = u_iters[-1].cpu()
+                            
+            FindGlobal_list[j][0] = calMPCCost(Q,R,P,u_final_iter_candidate, x_cur_red, EulerForwardCartpole_virtual, TS)
+            FindGlobal_list[j][1] = u_final_iter_candidate
+        endtime = time.time()
+                
+        Cost, u_best_cand = PickBestDiffResult(FindGlobal_list)
+        u_first = u_best_cand[0,0,0]
+        deltaTime = endtime - starttime
+        return u_first, Cost.item(), deltaTime
+    
+class NNController(MPCBasedController):
+    def __init__(self, device: str,
+                 model_dir: str, train_data_load_path: str,
+                 j_filename, u_filename, x0_filename,
+                 NNDatasetClass: str):
+        device = get_torch_device(device)
+        tensor_args = {'device': device, 'dtype': torch.float32}
+        train_subset, train_dataloader, val_subset, val_dataloader = get_dataset(
+            dataset_class=NNDatasetClass,
+            dataset_subdir = NN_SUB_DIR,
+            j_normalizer=NN_J_NORMALIZER,
+            train_data_load_path = train_data_load_path,
+            j_filename=j_filename,
+            u_filename = u_filename,
+            x0_filename = x0_filename,
+            ux_normalizer = NN_UX_NORMALIZER,
+            tensor_args=tensor_args
+            )
+        self.m_dataset = train_subset.dataset
+        print(f'dataset -- {len(self.m_dataset)}')
+
+        n_support_points = self.m_dataset.n_support_points
+        print(f'n_support_points -- {n_support_points}')
+        print(f'state_dim -- {self.m_dataset.state_dim}')
+        
+        input_size = 4    # Define your input size based on your problem
+        output_size = n_support_points    # Define your output size based on your problem (e.g., regression or single class prediction)
+        model = AMPCNet_Inference(input_size, output_size)
+
+        # load ema state dict
+        model.load_state_dict(
+            torch.load(os.path.join(model_dir, 'checkpoints', 'ema_model_current_state_dict.pth'),
+            map_location=tensor_args['device'])
+        )
+        model = model.to(device)
+        model = torch.compile(model)
+        self.m_model = model.eval()
+        self.m_device = device
+        
+    def SolveUThenGetCost(self, x_cur_red:np.array, x_cur_clean:np.array, Q:np.array, R:np.array, P:np.array, Hor:int ):
+        x0_tensor = torch.tensor(x_cur_clean).to(self.m_device)
+        x0_strd = self.m_dataset.normalize_condition(x0_tensor)
+        
+        starttime = time.time()
+        with torch.no_grad():
+            u_normalized = self.m_model(x0_strd, horizon = Hor)
+            inputs_final = self.m_dataset.unnormalize_states(u_normalized)
+        endtime = time.time()
+        
+        inputs_final = inputs_final[0,:,0].cpu()
+        inputs_final = inputs_final.reshape(1, Hor, 1)
+        Cost = calMPCCost(Q,R,P,inputs_final, x_cur_red, EulerForwardCartpole_virtual, TS)
+        u_first = inputs_final[0][0][0]
+        deltaTime = endtime - starttime
+        return u_first, Cost.item(), deltaTime
+
+
+class MPCController(MPCBasedController):
+    def __init__(self, initial_Uguess_range: np.array):
+        self.minGuessU = initial_Uguess_range[0]
+        self.maxGuessU = initial_Uguess_range[1]
+        
+    def SolveUThenGetCost(self, x_cur_red:np.array, x_cur_clean:np.array, Q:np.array, R:np.array, P:np.array, Hor:int):
+        starttime = time.time()
+        u_ini_guess, x_ini_guess = GenerateRandomInitialGuess(self.minGuessU, self.maxGuessU)
+        X_sol, U_sol, Cost = MPC_Solve(EulerForwardCartpole_virtual_Casadi, dynamic_update_virtual_Casadi, x_cur_red, x_ini_guess, u_ini_guess, NUM_STATE, Hor, Q, R, P, TS, OPT_SETTING)
+        endtime = time.time()
+        
+        u_first = U_sol[0]
+        deltaTime = endtime - starttime
+        return u_first, Cost, deltaTime
+
+class MPCMultiGuessController(MPCBasedController):
+    def __init__(self, initial_Uguess_range: np.array):
+        self.minGuessU = initial_Uguess_range[0]
+        self.maxGuessU = initial_Uguess_range[1]
+        
+    def SolveUThenGetCost(self, x_cur_red:np.array, x_cur_clean:np.array, Q:np.array, R:np.array, P:np.array, Hor:int):
+        FindGlobal_list = []
+        for j in range(NUM_FIND_GLOBAL):
+            array = np.zeros((1, Hor))  # Create a 1x64x1 tensor
+            FindGlobal_list.append([0, array])
+            
+        starttime = time.time()
+        for j in range(NUM_FIND_GLOBAL):
+            u_ini_guess, x_ini_guess = GenerateRandomInitialGuess(self.minGuessU, self.maxGuessU)
+            X_sol, U_sol, Cost = MPC_Solve(EulerForwardCartpole_virtual_Casadi, dynamic_update_virtual_Casadi, x_cur_red, x_ini_guess, u_ini_guess, NUM_STATE, Hor, Q, R, P, TS, OPT_SETTING)
+            FindGlobal_list[j][0] = Cost
+            FindGlobal_list[j][1] = U_sol
+        endtime = time.time()
+        Cost, u_best_cand = PickBestDiffResult(FindGlobal_list)
+        
+        u_first = u_best_cand[0]
+        deltaTime = endtime - starttime
+        return u_first, Cost, deltaTime  
+
+        
+    
+class ControllerManager:
+    def __init__(self):
+        # Initially set the strategy
+        self.m_StrategyList : list = []
+        self.m_Strategy : MPCBasedController = None
+        self.m_NumStrategy : int = 0
+    
+    def add_stategy(self, Contoller: MPCBasedController):
+        self.m_StrategyList.append(Contoller)
+        self.m_NumStrategy +=1
+        
+    def set_strategy(self, nIdxController: int):
+        if nIdxController > self.m_NumStrategy:
+            print("error")
+            return
+        self.m_Strategy = self.m_StrategyList[nIdxController]
+        
+
+    def ComputeInputAndCost(self, x_cur_red:np.array, x_cur_clean:np.array, Q:np.array, R:np.array, P:np.array, Hor:int ):
+        # Delegate behavior to the strategy
+        u, cost, time = self.m_Strategy.SolveUThenGetCost(x_cur_red, x_cur_clean, Q, R, P, Hor)
+        return u, cost, time
+
     
     
 
@@ -322,171 +555,151 @@ def GenerateRandomInitialGuess(min_random, max_random):
         x_ini_guess = -5
     return u_ini_guess, x_ini_guess
     
-@single_experiment_yaml
-def InferenceBy_one_method_single_IniState(
-    #########################################################################################
-    # Common
-    nIdxIniState: int,
-    
-    Diff_result: list,
-    
-    NN_result: list,
-    
-    MPC_result: list,
-    
-    MPC_multiguess_result: list,
-    
-    nMethodSelect: int,
-    
-    x0_red: np.array,
 
-    x0_clean: np.array,
-    
-    Q: np.array,
-    
-    R: np.array,
-    
-    P:np.array,
-    
-    Hor: int,
-
-    device: str,
-    
-    # Diffusion
-    Diff_model: diffusion_model_base.GaussianDiffusionModel,
-    
-    Diff_dataset: NMPC_Dataset,
-    
-    # NN
-    NN_model: AMPCNet_Inference,
-    
-    NN_dataset: NMPC_Dataset,
-    
-    # MPC
-    initial_Uguess_range: np.array
+def InferenceBy_one_method_single_IniState(nIdxIniState: int, nMethodSelect: int, cost_result_buffer: list, time_result_buffer: list,
+                                           x0_red: np.array, x0_clean: np.array,
+                                           Q: np.array, R: np.array, P:np.array, Hor: int,
+                                           contoller: ControllerManager
 ):
-    x_cur = x0_red
+    x_cur_red = x0_red
     x_cur_clean = x0_clean
+    
     # control loop
     for i in range(CONTROL_STEP):
-        if(nMethodSelect == 1): #Diff
-            FindGlobal_list = []
-            for j in range(NUM_FIND_GLOBAL):
-                tensor = torch.randn(1, Hor, 1)  # Create a 1x64x1 tensor
-                FindGlobal_list.append([0, tensor])
-            x0_tensor = torch.tensor(x_cur_clean).to(device)
-            x0_strd = Diff_dataset.normalize_condition(x0_tensor)
-            
-            for j in range(NUM_FIND_GLOBAL):
-                with torch.no_grad():
-                    with TimerCUDA() as timer_model_sampling:
-                        u_normalized_iters = Diff_model.run_CFG(
-                            x0_strd, None, WEIGHT_GUIDANC,
-                            n_samples=1, horizon=Hor,
-                            return_chain=True,
-                            sample_fn=ddpm_cart_pole_sample_fn,
-                            n_diffusion_steps_without_noise=25,
-                        )
-                print(f't_model_sampling: {timer_model_sampling.elapsed:.3f} sec')
+        print("method:",nMethodSelect,"Initial_state_th:",nIdxIniState, "control_step:",i,"\n")
+        u_first, Cost, time = contoller.ComputeInputAndCost(x_cur_red, x_cur_clean, Q, R, P, Hor)
+        x_next = EulerForwardCartpole_virtual(TS, x_cur_red, u_first)
 
-                ########
-                u_iters = Diff_dataset.unnormalize_states(u_normalized_iters[:,:,0:Hor,:])
-                u_final_iter_candidate = u_iters[-1].cpu()
-                             
-                FindGlobal_list[j][0] = calMPCCost(Q,R,P,u_final_iter_candidate,x_cur, EulerForwardCartpole_virtual, TS)
-                FindGlobal_list[j][1] = u_final_iter_candidate
-                    
-            Cost, u_best_cand = PickBestDiffResult(FindGlobal_list)
-            Diff_result[nIdxIniState][i] = Cost
-            u_first = u_best_cand[0,0,0]
-        elif(nMethodSelect == 2): #NN
-            x0_tensor = torch.tensor(x_cur_clean).to(device)
-            x0_strd = NN_dataset.normalize_condition(x0_tensor)
-            with torch.no_grad():
-                with TimerCUDA() as t_NN_sampling:
-                    u_normalized = NN_model(x0_strd)
-                    inputs_final = NN_dataset.unnormalize_states(u_normalized)
-            inputs_final = inputs_final[0,:,0].cpu()
-            Cost = calMPCCost(Q,R,P,inputs_final,x_cur, EulerForwardCartpole_virtual, TS)
-            NN_result[nIdxIniState][i] = Cost
-            u_first = inputs_final[0]
-                    
-        elif(nMethodSelect == 3): #MPC
-            u_ini_guess, x_ini_guess = GenerateRandomInitialGuess(initial_Uguess_range[0], initial_Uguess_range[1])
-            X_sol, U_sol, Cost = MPC_Solve(EulerForwardCartpole_virtual_Casadi, dynamic_update_virtual_Casadi, x_cur, x_ini_guess, u_ini_guess, NUM_STATE, Hor, Q, R, P, TS, OPT_SETTING)
-            MPC_result[nIdxIniState][i] = Cost
-            u_first = U_sol[0]
-        elif(nMethodSelect == 4): #MPC multiguess
-            FindGlobal_list = []
-            for j in range(NUM_FIND_GLOBAL):
-                array = np.zeros(1, Hor)  # Create a 1x64x1 tensor
-                FindGlobal_list.append([0, array])
-            for j in range(NUM_FIND_GLOBAL):
-                u_ini_guess, x_ini_guess = GenerateRandomInitialGuess(initial_Uguess_range[0], initial_Uguess_range[1])
-                X_sol, U_sol, Cost = MPC_Solve(EulerForwardCartpole_virtual_Casadi, dynamic_update_virtual_Casadi, x_cur, x_ini_guess, u_ini_guess, NUM_STATE, Hor, Q, R, P, TS, OPT_SETTING)
-                FindGlobal_list[j][0] = Cost
-                FindGlobal_list[j][1] = U_sol
-            Cost, u_best_cand = PickBestDiffResult(FindGlobal_list)
-            MPC_multiguess_result[nIdxIniState][i] = Cost
-            u_first = u_best_cand[0]
-        else: #notihing
-            print("error")
+        # store data
+        nIdxStore = nMethodSelect * NUM_ONE_METHODGRP + nIdxIniState * CONTROL_STEP + i
+        cost_result_buffer[nMethodSelect][nIdxIniState][i] = Cost
+        time_result_buffer[nMethodSelect][nIdxIniState][i] = time
         
-        x_next = EulerForwardCartpole_virtual(TS, x_cur, u_first)
-
         # update
-        x_cur = x_next
-        x_cur_clean = torch.tensor( [[x_next[0], x_next[1], x_next[4], x_next[3]]] )
+        x_cur_red = x_next
+        x_cur_clean = torch.tensor( [x_next[0], x_next[1], x_next[4], x_next[3]] )
+        
+    print("method:",nMethodSelect,"Initial_state_th:",nIdxIniState, "finish! \n")
+
+def TestSingleInitialStateForEachMethod(Diff_ctrl, NN_ctrl, MPC_ctrl, MPCMulti_ctrl,Q, R, P, Hor):
+    CostResult_SharedMemory = list([[[0.0 for _ in range(CONTROL_STEP)] for _ in range(NUM_MONTECARLO)] for _ in range(NUM_CONTROLLER)])
+    TimeResult_SharedMemory = list([[[0.0 for _ in range(CONTROL_STEP)] for _ in range(NUM_MONTECARLO)] for _ in range(NUM_CONTROLLER)])
     
+    CtrlManager = ControllerManager()
+    CtrlManager.add_stategy(Diff_ctrl)
+    CtrlManager.add_stategy(NN_ctrl)
+    CtrlManager.add_stategy(MPC_ctrl)
+    CtrlManager.add_stategy(MPCMulti_ctrl)
     
+    x0 = np.random.uniform(INITIAL_X_RANGE[0], INITIAL_X_RANGE[1])
+    theta0 = np.random.uniform(INITIAL_THETA_RANGE[0], INITIAL_THETA_RANGE[1])
+    theta_red_0 = ThetaToRedTheta(theta0)
+    X0_clean = np.array([x0, 0.0, theta_red_0, 0.0])
+    X0_red = np.array([x0, 0.0, theta0, 0.0, theta_red_0])
+    for i in range(NUM_CONTROLLER):
+        CtrlManager.set_strategy(i)
+        InferenceBy_one_method_single_IniState(0, i, CostResult_SharedMemory, TimeResult_SharedMemory,
+                                X0_red, X0_clean, 
+                                Q, R, P, Hor,
+                                CtrlManager)
 
 def main():
-    arg_list = []
-    # model_list = [10000, 50000, 100000, 150000, 200000, 250000, 300000, 350000]
-    model_list = [40000]
-    num_modelread = len(model_list)
-    
-    MAX_CORE_CPU = 1
-    
-    #initial state
-    x_0_test = -0.47
-    theta_0_test = 1.85
-    thetared_0_test = ThetaToRedTheta(theta_0_test)
-    x0_test_red = np.array([x_0_test , 0, theta_0_test, 0, thetared_0_test])
-    x0_test_clean = np.array([[x_0_test , 0, thetared_0_test, 0]])
-
-    # MPC parameters
-    Q_REDUNDANT = 1000.0
-    P_REDUNDANT = 1000.0
-    Q = np.diag([0.01, 0.01, 0, 0.01, Q_REDUNDANT])
-    R = np.diag([0.001])
-    P = np.diag([0.01, 0.1, 0, 0.1, P_REDUNDANT])
-    HORIZON = 63 # mpc horizon
-    initial_guess_x_grp = [5, 0]
-    initial_guess_u_grp = [1000, -10000]
-    idx_pos = 0
-    idx_neg = 1
-    
-    
-    for i in range(num_modelread):
-        model_path = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/data_trained_models/'+str(MODEL_FOLDER)+'/'+ str(model_list[i])
-        result_path = os.path.join(RESULT_FOLDER, str(model_list[i]))
-        arg_list.append((experiment, {'model_dir': model_path, 'result_dir': result_path, 
-                                      'x0_test_red':x0_test_red, 'x0_test_clean':x0_test_clean, 'Q':Q, 'R':R, 'P':P,
-                                      'results_dir':'logs', 'seed': 30, 'load_model_dir':MODEL_SAVED_PATH, 
-                                      'train_data_load_path':DATA_LOAD_PATH,
-                                      'u_filename': U_DATA_FILENAME, 'j_filename': J_DATA_FILENAME, 'x0_filename': X0_CONDITION_DATA_NAME,
-                                      'device': 'cuda'}))
+    j_all_filepath = os.path.join(RESULT_SAVED_PATH,COST_ALL_FILENAME_SAVE)
+    time_all_filepath = os.path.join(RESULT_SAVED_PATH,TIME_ALL_FILENAME_SAVE)
+    j_mean_filepath = os.path.join(RESULT_SAVED_PATH,COST_MEAN_FILENAME_SAVE)
+    time_mean_filepath = os.path.join(RESULT_SAVED_PATH,TIME_MEAN_FILENAME_SAVE)
+    j_std_filepath = os.path.join(RESULT_SAVED_PATH,COST_STD_FILENAME_SAVE)
+    time_std_filepath = os.path.join(RESULT_SAVED_PATH,TIME_STD_FILENAME_SAVE)
+    if B_ISSAVE == 0:
+        MAX_CORE_CPU = 2
+        # MPC parameters
+        Q_REDUNDANT = 1000.0
+        P_REDUNDANT = 1000.0
+        Q = np.diag([0.01, 0.01, 0, 0.01, Q_REDUNDANT])
+        R = np.diag([0.001])
+        P = np.diag([0.01, 0.1, 0, 0.1, P_REDUNDANT])
         
-    with Pool(processes=MAX_CORE_CPU) as pool:
-        pool.starmap(run_experiment, arg_list)
+        # initialize controller
+        Diff_ctrl = DiffusionController(DEVICE, DIFF_MODEL_PATH, DIFF_DATA_LOAD_PATH, DIFF_J_DATA_FILENAME, DIFF_U_DATA_FILENAME, DIFF_X0_CONDITION_DATA_NAME, DIFF_DATASET_CLASS) 
+        NN_ctrl = NNController(DEVICE, NN_MODEL_PATH, NN_DATA_LOAD_PATH, NN_J_DATA_FILENAME, NN_U_DATA_FILENAME, NN_X0_CONDITION_DATA_NAME, NN_DATASET_CLASS) 
+        MPC_ctrl = MPCController(MPC_U_RANGE)
+        MPCMulti_ctrl = MPCMultiGuessController(MPC_U_RANGE)
         
-    # run MPC
-    runMPC(x0_test_red, RESULT_FOLDER, Q, R, P, HORIZON, initial_guess_x_grp[idx_pos], initial_guess_u_grp[idx_pos])
-    runMPC(x0_test_red, RESULT_FOLDER, Q, R, P, HORIZON, initial_guess_x_grp[idx_neg], initial_guess_u_grp[idx_neg])
+        # TestSingleInitialStateForEachMethod(Diff_ctrl, NN_ctrl, MPC_ctrl, MPCMulti_ctrl,Q, R, P, HOR)
         
-    print("save data finsih")
+        with mp.Manager() as manager:
+            
+            CostResult_SharedMemory = manager.list([[[0.0 for _ in range(CONTROL_STEP)] for _ in range(NUM_MONTECARLO)] for _ in range(NUM_CONTROLLER)])
+            TimeResult_SharedMemory = manager.list([[[0.0 for _ in range(CONTROL_STEP)] for _ in range(NUM_MONTECARLO)] for _ in range(NUM_CONTROLLER)])
+            ArgList = []
+            for i in range(NUM_CONTROLLER):
+                # add contrlloer into manager
+                CtrlManager = ControllerManager()
+                CtrlManager.add_stategy(Diff_ctrl)
+                CtrlManager.add_stategy(NN_ctrl)
+                CtrlManager.add_stategy(MPC_ctrl)
+                CtrlManager.add_stategy(MPCMulti_ctrl)
+                CtrlManager.set_strategy(i)
+                for j in range(0,NUM_MONTECARLO):
+                    x0 = np.random.uniform(INITIAL_X_RANGE[0], INITIAL_X_RANGE[1])
+                    theta0 = np.random.uniform(INITIAL_THETA_RANGE[0], INITIAL_THETA_RANGE[1])
+                    theta_red_0 = ThetaToRedTheta(theta0)
+                    X0_clean = np.array([x0, 0.0, theta_red_0, 0.0])
+                    X0_red = np.array([x0, 0.0, theta0, 0.0, theta_red_0])
+                
+                
+                    ArgList.append((j, i, CostResult_SharedMemory, TimeResult_SharedMemory,
+                                    X0_red, X0_clean, 
+                                    Q, R, P, HOR,
+                                    CtrlManager))
+            
+            print("start generate data \n")
+            with mp.Pool(processes=MAX_CORE_CPU) as pool:
+                pool.starmap(InferenceBy_one_method_single_IniState, ArgList)
+            
+            j_all = np.array(CostResult_SharedMemory)
+            time_all = np.array(TimeResult_SharedMemory)
+            j_mean = np.array(NUM_CONTROLLER, CONTROL_STEP)
+            time_mean = np.array(NUM_CONTROLLER, CONTROL_STEP)
+            j_std = np.array(NUM_CONTROLLER, CONTROL_STEP)
+            time_std = np.array(NUM_CONTROLLER, CONTROL_STEP)
+            
+            
+            # do statistic 
+            for i in range( NUM_CONTROLLER ):
+                j_singleCtrl = j_all[i,:,:]
+                time_singleCtrl = time_all[i,:,:]
+                j_mean[i,:] = np.mean(j_singleCtrl, axis=0)
+                j_std[i,:] = np.std(j_singleCtrl, axis=0)
+                time_mean[i,:] = np.mean(time_singleCtrl, axis=0)
+                time_std[i,:] = np.std(time_singleCtrl, axis=0)
+            
+            np.save(j_all_filepath, j_all)
+            np.save(time_all_filepath, time_all)
+            np.save(j_mean_filepath, j_mean)
+            np.save(time_mean_filepath, time_mean)
+            np.save(j_std_filepath, j_std)
+            np.save(time_std_filepath, time_std)
+            
+            print("save data finsih")
+    
+    if B_ISSAVE == 1:
+        j_all = np.load(j_all_filepath)
+        j_mean = np.load(j_mean_filepath)
+        j_std = np.load(j_std_filepath)
+        time_all = np.load(time_all_filepath)
+        time_mean = np.load(time_mean_filepath)
+        time_std = np.load(time_std_filepath)
+        print("j_all.shape:",j_all.shape)
+        print("j_mean.shape:",j_mean.shape)
+        print("j_std.shape:",j_std.shape)
+        print("time_all.shape:",time_all.shape)
+        print("time_mean.shape:",time_mean.shape)
+        print("time_std.shape:",time_std.shape)
+        
+        
+    
 
 if __name__ == '__main__':
-    multiprocessing.set_start_method("spawn")
+    # multiprocessing.set_start_method("spawn")
     main()

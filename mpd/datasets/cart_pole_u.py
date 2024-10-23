@@ -14,8 +14,8 @@ from mpd.utils.loading import load_params_from_yaml
 dataset_base_dir = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/training_data' 
 
 # Data Name Setting 
-U_DATA_NAME = 'u_tensor_420000-8-1.pt'
-X0_CONDITION_DATA_NAME = 'x0_tensor_420000-4.pt'
+U_DATA_NAME = 'u_ini_10x15_noise_15_step_50_hor_64.pt'
+X0_CONDITION_DATA_NAME = 'x0_4DOF_ini_10x15_noise_15_step_50_hor_64.pt'
 
 class InputsDataset(Dataset, abc.ABC):
 

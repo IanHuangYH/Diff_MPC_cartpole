@@ -393,7 +393,6 @@ class GaussianDiffusionModel(nn.Module, ABC):
     
     def run_CFG(self, context=None, hard_conds=None, context_weight = 0.1, n_samples=1, horizon =8, return_chain=False, **diffusion_kwargs):
         context = copy(context)
-        print(f'context -- {context}')
         self.w = context_weight
                 
         # if context is not None:
