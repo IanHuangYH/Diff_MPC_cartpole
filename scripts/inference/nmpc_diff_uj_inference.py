@@ -470,7 +470,7 @@ def experiment(
         
         # update
         x_cur = x_next
-        x0_test_clean = torch.tensor( [[x_next[0], x_next[1], x_next[4], x_next[3]]] )
+        x0_test_clean = torch.tensor( [x_next[0], x_next[1], x_next[4], x_next[3]] )
 
  #-------------------------- Sampling finished --------------------------------
 
@@ -505,7 +505,7 @@ def main():
     theta_0_test = 1.85
     thetared_0_test = ThetaToRedTheta(theta_0_test)
     x0_test_red = np.array([x_0_test , 0, theta_0_test, 0, thetared_0_test])
-    x0_test_clean = np.array([[x_0_test , 0, thetared_0_test, 0]])
+    x0_test_clean = np.array([x_0_test , 0, thetared_0_test, 0])
 
     # MPC parameters
     Q_REDUNDANT = 1000.0

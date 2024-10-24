@@ -7,23 +7,19 @@ import matplotlib.pyplot as plt
 import matplotlib
 matplotlib.use('Agg')
 import torch
-from einops._torch_specific import allow_ops_in_compiled_graph  # requires einops>=0.6.1
 
-from experiment_launcher import single_experiment_yaml, run_experiment
 from mpd.models import ConditionedTemporalUnet, UNET_DIM_MULTS, diffusion_model_base
 from mpd.models.diffusion_models.sample_functions import guide_gradient_steps, ddpm_sample_fn, ddpm_cart_pole_sample_fn
 from mpd.trainer import get_dataset, get_model
-from mpd.datasets.nmpc_cart_pole_data import NMPC_Dataset
 from mpd.utils.loading import load_params_from_yaml
 from torch_robotics.torch_utils.seed import fix_random_seed
-from torch_robotics.torch_utils.torch_timer import TimerCUDA
 from torch_robotics.torch_utils.torch_utils import get_torch_device, freeze_torch_model_params
 
-from multiprocessing import Pool, Manager
-import multiprocessing
-import time
-import torch.multiprocessing as mp
 
+import time
+import torch.distributed as dist
+import torch.multiprocessing as mp
+from torch.nn.parallel import DistributedDataParallel as DDP
 
 # diffusion modify
 DIFF_MODEL_FOLDER = 'nmpc_batch_4096_random112500_zscroe_xu_decay1'
@@ -36,16 +32,6 @@ DIFF_NOISE_NUM = 15 #15
 DIFF_J_NORMALIZER = 'GaussianNormalizer' #GaussianNormalizer, LimitsNormalizer, LogMinMaxNormalizer, LogZScoreNormalizer, OnlyLogNormalizer
 DIFF_UX_NORMALIZER = 'GaussianNormalizer' 
 
-# NN modify
-NN_MODEL_FOLDER = 'NN_120000_random_decayguess1'
-NN_DATA_LOAD_FOLER = 'Random_also_noisedata_decayguess1_112500' # NN
-NN_DATASET_CLASS = 'NMPC_4DOF_DATASET' #NMPC_4DOF_DATASET
-NN_INITILA_X = 10 #10, 5
-NN_INITIAL_THETA = 15 #15, 6
-NN_NOISE_NUM = 15 #15, 3
-NN_J_NORMALIZER = 'LimitsNormalizer' #GaussianNormalizer, LimitsNormalizer, LogMinMaxNormalizer, LogZScoreNormalizer, OnlyLogNormalizer
-NN_UX_NORMALIZER = 'LimitsNormalizer' 
-
 # MPC_modify
 MPC_U_RANGE = np.array([-4500.0,4500])
 OPT_SETTING = {'ipopt.max_iter':20000, 'ipopt.acceptable_tol':1e-8, 'ipopt.acceptable_obj_change_tol':1e-6, 'ipopt.print_level': 0, 'print_time': 0, 'ipopt.sb': 'yes'}
@@ -53,11 +39,14 @@ OPT_SETTING = {'ipopt.max_iter':20000, 'ipopt.acceptable_tol':1e-8, 'ipopt.accep
 # Common modify
 CONTROL_STEP = 50
 HOR = 64
-NUM_FIND_GLOBAL = 5
-NUM_MONTECARLO = 100
-DEVICE = 'cpu'
-NUM_CONTROLLER = 4
+NUM_FIND_MULTIMODALITY = 20
+
+DEVICE = 'cuda'
+NUM_CONTROLLER = 1
 B_ISSAVE = 0
+N_GPU = torch.cuda.device_count()
+N_DATA_SCALE = 15
+NUM_MONTECARLO = N_GPU * N_DATA_SCALE
 
 # monte carlo initial state sample range
 INITIAL_X_RANGE = np.array([-3,3])
@@ -65,24 +54,14 @@ INITIAL_THETA_RANGE = np.array([1.8,4.4])
 
 # result filename
 RESULT_SAVED_PATH = os.path.join('/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/model_performance_saving',DIFF_MODEL_FOLDER,str(DIFF_MODEL_CHECKPOINT))
-COST_ALL_FILENAME_SAVE = 'analysis_all_method_cost_all.npy'
-COST_MEAN_FILENAME_SAVE = 'analysis_all_method_cost_mean.npy'
-COST_STD_FILENAME_SAVE = 'analysis_all_method_cost_std.npy'
-TIME_ALL_FILENAME_SAVE = 'analysis_all_method_time_all.npy'
-TIME_MEAN_FILENAME_SAVE = 'analysis_all_method_time_mean.npy'
-TIME_STD_FILENAME_SAVE = 'analysis_all_method_time_std.npy'
-
-############################################################################################################################################
-
+U_SOL_ALL = 'analysis_diff_infe_all_u.npy'
+NUM_MULTI_MODALITY = 'analysis_diff_num_multimodality.npy'
 # path
 DIFF_MODEL_PATH = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/data_trained_models/'+DIFF_MODEL_FOLDER+'/'+str(DIFF_MODEL_CHECKPOINT)
 DIFF_DATA_LOAD_PATH = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/training_data/CartPole-NMPC/'+DIFF_DATA_LOAD_FOLER
-NN_MODEL_PATH = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/data_trained_models/'+NN_MODEL_FOLDER
-NN_DATA_LOAD_PATH = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/training_data/CartPole-NMPC/'+NN_DATA_LOAD_FOLER
 
 # idx
 NUM_ONE_METHODGRP = CONTROL_STEP * NUM_MONTECARLO
-
 
 # fix_random_seed(40)
 # Data Name Setting
@@ -90,11 +69,6 @@ Diff_filename_idx = '_ini_'+str(DIFF_INITILA_X)+'x'+str(DIFF_INITIAL_THETA)+'_no
 DIFF_X0_CONDITION_DATA_NAME = 'x0' + Diff_filename_idx
 DIFF_U_DATA_FILENAME = 'u' + Diff_filename_idx
 DIFF_J_DATA_FILENAME = 'j' + Diff_filename_idx
-
-NN_filename_idx = '_ini_'+str(NN_INITILA_X)+'x'+str(NN_INITIAL_THETA)+'_noise_'+str(NN_NOISE_NUM)+'_step_'+str(CONTROL_STEP)+'_hor_'+str(HOR)+'.pt'
-NN_X0_CONDITION_DATA_NAME = 'x0_4DOF' + NN_filename_idx
-NN_U_DATA_FILENAME = 'u' + NN_filename_idx
-NN_J_DATA_FILENAME = 'j' + NN_filename_idx
 
 # dynamic parameter
 M_CART = 2.0
@@ -115,33 +89,18 @@ TS = 0.01
 NUM_STATE = 5
 WEIGHT_GUIDANC = 0.01 # non-conditioning weight
 
-################################################################################################################################################
-class AMPCNet_Inference(nn.Module):
-    def __init__(self, input_size, output_size):
-        super(AMPCNet_Inference, self).__init__()
-        # Define the hidden layers and output layer
-        self.hidden1 = nn.Linear(input_size, 2)  # First hidden layer with 2 neurons
-        self.hidden2 = nn.Linear(2, 50)          # Second hidden layer with 50 neurons
-        self.hidden3 = nn.Linear(50, 50)         # Third hidden layer with 50 neurons
-        self.output = nn.Linear(50, output_size) # Output layer
-
-    def forward(self, x, horizon):
-        # Forward pass through the network with the specified activations
-        x = x.to(torch.float32) 
-        x = torch.tanh(self.hidden1(x))          # Tanh activation for first hidden layer
-        x = torch.tanh(self.hidden2(x))          # Tanh activation for second hidden layer
-        x = torch.tanh(self.hidden3(x))          # Tanh activation for third hidden layer
-        x = self.output(x)                       # Linear activation (no activation function) for the output layer
-
-        # reshape the output
-        x = x.view(1, horizon, 1) # 1*horizon*1
-
-        return x
 
 class MPCBasedController(ABC):
     @abstractmethod
     def SolveUThenGetCost(self:np.array, x_cur_red:np.array, x_cur_clean:np.array, Q:np.array, R:np.array, P:np.array, Hor:int):
         # x_cur_red, x_cur_clean are 1D array with 5 and 4 seperately
+        pass
+    
+    def SolveMultiModalityUAndRecord(self:np.array, x_cur_red:np.array, x_cur_clean:np.array, Q:np.array, R:np.array, P:np.array, Hor:int, 
+                                     nIdxMethod: int, nIdxIniStateGrp: int, nIdxContrlStep:int, u_buffer:list):
+        pass
+    
+    def PrepareModelForDDP(self, device, rank):
         pass
 
 class DiffusionController(MPCBasedController):
@@ -208,14 +167,14 @@ class DiffusionController(MPCBasedController):
         
     def SolveUThenGetCost(self, x_cur_red:np.array, x_cur_clean:np.array, Q:np.array, R:np.array, P:np.array, Hor:int ):
         FindGlobal_list = []
-        for j in range(NUM_FIND_GLOBAL):
+        for j in range(NUM_FIND_MULTIMODALITY):
             tensor = torch.randn(1, Hor, 1)  # Create a 1x64x1 tensor
             FindGlobal_list.append([0, tensor])
         x0_tensor = torch.tensor(x_cur_clean).to(self.m_device)
         x0_strd = self.m_dataset.normalize_condition(x0_tensor)
         
         starttime = time.time()
-        for j in range(NUM_FIND_GLOBAL):
+        for j in range(NUM_FIND_MULTIMODALITY):
             with torch.no_grad():
                 u_normalized_iters = self.m_model.run_CFG(
                     x0_strd, None, WEIGHT_GUIDANC,
@@ -236,76 +195,47 @@ class DiffusionController(MPCBasedController):
         deltaTime = endtime - starttime
         return u_first, Cost.item(), deltaTime
     
-class NNController(MPCBasedController):
-    def __init__(self, device: str,
-                 model_dir: str, train_data_load_path: str,
-                 j_filename, u_filename, x0_filename,
-                 NNDatasetClass: str):
-        device = get_torch_device(device)
-        tensor_args = {'device': device, 'dtype': torch.float32}
-        train_subset, train_dataloader, val_subset, val_dataloader = get_dataset(
-            dataset_class=NNDatasetClass,
-            j_normalizer=NN_J_NORMALIZER,
-            train_data_load_path = train_data_load_path,
-            j_filename=j_filename,
-            u_filename = u_filename,
-            x0_filename = x0_filename,
-            ux_normalizer = NN_UX_NORMALIZER,
-            tensor_args=tensor_args,
-            )
-        self.m_dataset = train_subset.dataset
-        print(f'dataset -- {len(self.m_dataset)}')
-
-        n_support_points = self.m_dataset.n_support_points
-        print(f'n_support_points -- {n_support_points}')
-        print(f'state_dim -- {self.m_dataset.state_dim}')
+    def SolveMultiModalityUAndRecord(self:np.array, x_cur_red:np.array, x_cur_clean:np.array, Q:np.array, R:np.array, P:np.array, Hor:int, 
+                                     nIdxMethod: int, nIdxIniStateGrp: int, nIdxContrlStep:int, u_buffer:list):
+        Q_tensor = torch.tensor(Q, device=self.m_device)
+        R_tensor = torch.tensor(R, device=self.m_device)
+        P_tensor = torch.tensor(P, device=self.m_device)
         
-        input_size = 4    # Define your input size based on your problem
-        output_size = n_support_points    # Define your output size based on your problem (e.g., regression or single class prediction)
-        model = AMPCNet_Inference(input_size, output_size)
-
-        # load ema state dict
-        model.load_state_dict(
-            torch.load(os.path.join(model_dir, 'checkpoints', 'ema_model_current_state_dict.pth'),
-            map_location=tensor_args['device'])
-        )
-        model = model.to(device)
-        self.m_model = model.eval()
-        self.m_device = device
+        FindGlobal_list = torch.zeros(NUM_FIND_MULTIMODALITY, 2, device=self.m_device)
         
-    def SolveUThenGetCost(self, x_cur_red:np.array, x_cur_clean:np.array, Q:np.array, R:np.array, P:np.array, Hor:int ):
-        x0_tensor = torch.tensor(x_cur_clean).to(self.m_device)
-        x0_strd = self.m_dataset.normalize_condition(x0_tensor)
+        x0_clean_tensor = torch.tensor(x_cur_clean).to(self.m_device)
+        x0_red_tensor = torch.tensor(x_cur_red).to(self.m_device)
+        x0_strd = self.m_dataset.normalize_condition(x0_clean_tensor)
+        x0_red_tensor_extend = x0_red_tensor.unsqueeze(0).repeat(NUM_FIND_MULTIMODALITY, 1) 
         
-        starttime = time.time()
         with torch.no_grad():
-            u_normalized = self.m_model(x0_strd, horizon = Hor)
-            inputs_final = self.m_dataset.unnormalize_states(u_normalized)
-        endtime = time.time()
+            u_normalized_iters = self.m_model.run_CFG(
+                x0_strd, None, WEIGHT_GUIDANC,
+                n_samples=NUM_FIND_MULTIMODALITY, horizon=Hor,
+                return_chain=True,
+                sample_fn=ddpm_cart_pole_sample_fn,
+                n_diffusion_steps_without_noise=5,
+            )
+            u_iters = self.m_dataset.unnormalize_states(u_normalized_iters[:,:,0:Hor,:]) # iter x n_sample x Hor x 1
+            u_final_iter_candidate = u_iters[-1] # n_sample x Hor x 1
+            
+            
+            FindGlobal_list[:,0] = calMPCCost_tensor(Q_tensor,R_tensor,P_tensor,u_final_iter_candidate, x0_red_tensor_extend, EulerForwardCartpole_virtual_tensor, TS, self.m_device)
+            FindGlobal_list[:,1] = u_final_iter_candidate[:,0,0]
         
-        inputs_final = inputs_final[0,:,0].cpu()
-        inputs_final = inputs_final.reshape(1, Hor, 1)
-        Cost = calMPCCost(Q,R,P,inputs_final, x_cur_red, EulerForwardCartpole_virtual, TS)
-        u_first = inputs_final[0][0][0]
-        deltaTime = endtime - starttime
-        return u_first, Cost.item(), deltaTime
-
-
-class MPCController(MPCBasedController):
-    def __init__(self, initial_Uguess_range: np.array):
-        self.minGuessU = initial_Uguess_range[0]
-        self.maxGuessU = initial_Uguess_range[1]
+        Cost, u_best_cand = PickBestDiffResult(FindGlobal_list)
+        u_first = u_best_cand.item()
         
-    def SolveUThenGetCost(self, x_cur_red:np.array, x_cur_clean:np.array, Q:np.array, R:np.array, P:np.array, Hor:int):
-        starttime = time.time()
-        u_ini_guess, x_ini_guess = GenerateRandomInitialGuess(self.minGuessU, self.maxGuessU)
-        X_sol, U_sol, Cost = MPC_Solve(EulerForwardCartpole_virtual_Casadi, dynamic_update_virtual_Casadi, x_cur_red, x_ini_guess, u_ini_guess, NUM_STATE, Hor, Q, R, P, TS, OPT_SETTING)
-        endtime = time.time()
-        
-        u_first = U_sol[0]
-        deltaTime = endtime - starttime
-        return u_first, Cost, deltaTime
+        for j in range(NUM_FIND_MULTIMODALITY):
+            u_buffer[nIdxMethod][nIdxIniStateGrp][j][nIdxContrlStep] = FindGlobal_list[j,0].item()
 
+        return u_first
+    
+    def PrepareModelForDDP(self, device, rank):
+        self.m_model.to(device)
+        self.m_model = DDP(self.m_model, device_ids=[rank])
+        self.m_model.eval()
+    
 class MPCMultiGuessController(MPCBasedController):
     def __init__(self, initial_Uguess_range: np.array):
         self.minGuessU = initial_Uguess_range[0]
@@ -313,12 +243,12 @@ class MPCMultiGuessController(MPCBasedController):
         
     def SolveUThenGetCost(self, x_cur_red:np.array, x_cur_clean:np.array, Q:np.array, R:np.array, P:np.array, Hor:int):
         FindGlobal_list = []
-        for j in range(NUM_FIND_GLOBAL):
+        for j in range(NUM_FIND_MULTIMODALITY):
             array = np.zeros((1, Hor))  # Create a 1x64x1 tensor
             FindGlobal_list.append([0, array])
             
         starttime = time.time()
-        for j in range(NUM_FIND_GLOBAL):
+        for j in range(NUM_FIND_MULTIMODALITY):
             u_ini_guess, x_ini_guess = GenerateRandomInitialGuess(self.minGuessU, self.maxGuessU)
             X_sol, U_sol, Cost = MPC_Solve(EulerForwardCartpole_virtual_Casadi, dynamic_update_virtual_Casadi, x_cur_red, x_ini_guess, u_ini_guess, NUM_STATE, Hor, Q, R, P, TS, OPT_SETTING)
             FindGlobal_list[j][0] = Cost
@@ -329,8 +259,6 @@ class MPCMultiGuessController(MPCBasedController):
         u_first = u_best_cand[0]
         deltaTime = endtime - starttime
         return u_first, Cost, deltaTime  
-
-        
     
 class ControllerManager:
     def __init__(self):
@@ -354,11 +282,17 @@ class ControllerManager:
         # Delegate behavior to the strategy
         u, cost, time = self.m_Strategy.SolveUThenGetCost(x_cur_red, x_cur_clean, Q, R, P, Hor)
         return u, cost, time
-
     
+    def SolveMultiModalityUAndRecord(self, x_cur_red:np.array, x_cur_clean:np.array, Q:np.array, R:np.array, P:np.array, Hor:int, 
+                                     nIdxMethod: int, nIdxIniStateGrp: int, nIdxContrlStep:int, u_buffer:list ):
+        return self.m_Strategy.SolveMultiModalityUAndRecord(x_cur_red, x_cur_clean, Q, R, P, Hor, nIdxMethod, nIdxIniStateGrp, nIdxContrlStep, u_buffer)
     
-
-
+    def SolveMultiModalityUAndRecordForAllIniState(self, x_cur_red:torch.tensor, x_cur_clean:torch.tensor, Q:torch.tensor, R:torch.tensor, P:torch.tensor, Hor:int, 
+                                     nIdxMethod: int, nIdxContrlStep:int, u_buffer:list ):
+        return 
+    def PrepareModelForDDP(self, device, rank):
+        self.m_Strategy.PrepareModelForDDP(device, rank)
+    
 def EulerForwardCartpole_virtual_Casadi(dynamic_update_virtual_Casadi, dt, x,u) -> ca.vertcat:
     xdot = dynamic_update_virtual_Casadi(x,u)
     return x + xdot * dt
@@ -383,27 +317,6 @@ def dynamic_update_virtual_Casadi(x, u) -> ca.vertcat:
         -PI_UNDER_2 * (x[2]-np.pi) * x[3]   # theta_stat_dot
     )
     
-def EulerForwardCartpole_virtual(dt, x,u) -> np.array:
-    xdot = np.array([
-        x[1],            # xdot 
-        ( MPLP * -np.sin(x[2]) * x[3]**2 
-          +MPG * np.sin(x[2]) * np.cos(x[2])
-          + u 
-          )/(M_TOTAL - M_POLE*np.cos(x[2]))**2, # xddot
-
-        x[3],        # thetadot
-        ( -MPLP * np.sin(x[2]) * np.cos(x[2]) * x[3]**2
-          -MTG * np.sin(x[2])
-          -np.cos(x[2])*u
-          )/(MTLP - MPLP*np.cos(x[2])**2),  # thetaddot
-        
-        -PI_UNDER_2 * (x[2]-np.pi) * x[3]   # theta_stat_dot
-    ])
-    return x + xdot * dt
-
-def ThetaToRedTheta(theta):
-    return (theta-np.pi)**2/-np.pi + np.pi
-
 def MPC_Solve( system_update, system_dynamic, x0:np.array, initial_guess_x:float, initial_guess_u:float, num_state:int, horizon:int, Q_cost:np.array, R_cost:float, P_cost:np.array, ts: float, opts_setting ):
     # casadi_Opti
     optimizer_normal = ca.Opti()
@@ -443,6 +356,56 @@ def MPC_Solve( system_update, system_dynamic, x0:np.array, initial_guess_x:float
     Cost_sol = sol.value(cost)
     return X_sol, U_sol, Cost_sol
 
+def GenerateRandomInitialGuess(min_random, max_random):
+    u_ini_guess = np.random.uniform(min_random, max_random, 1)[0]
+    if u_ini_guess >=0:
+        x_ini_guess = 5
+    else:
+        x_ini_guess = -5
+    return u_ini_guess, x_ini_guess
+    
+def EulerForwardCartpole_virtual(dt, x,u) -> np.array:
+    xdot = np.array([
+        x[1],            # xdot 
+        ( MPLP * -np.sin(x[2]) * x[3]**2 
+          +MPG * np.sin(x[2]) * np.cos(x[2])
+          + u 
+          )/(M_TOTAL - M_POLE*np.cos(x[2]))**2, # xddot
+
+        x[3],        # thetadot
+        ( -MPLP * np.sin(x[2]) * np.cos(x[2]) * x[3]**2
+          -MTG * np.sin(x[2])
+          -np.cos(x[2])*u
+          )/(MTLP - MPLP*np.cos(x[2])**2),  # thetaddot
+        
+        -PI_UNDER_2 * (x[2]-np.pi) * x[3]   # theta_stat_dot
+    ])
+    return x + xdot * dt
+
+def EulerForwardCartpole_virtual_tensor(dt, x:torch.tensor,u:torch.tensor, device:torch.device) -> torch.tensor:
+# x: n_sample x 5 x 1, u: n_sample
+    xdot = torch.stack([
+        x[:,1],            # xdot 
+        ( MPLP * -torch.sin(x[:,2]) * x[:,3]**2 
+          +MPG * torch.sin(x[:,2]) * torch.cos(x[:,2])
+          + u 
+          )/(M_TOTAL - M_POLE*torch.cos(x[:,2]))**2, # xddot
+
+        x[:,3],        # thetadot
+        ( -MPLP * torch.sin(x[:,2]) * torch.cos(x[:,2]) * x[:,3]**2
+          -MTG * torch.sin(x[:,2])
+          -(torch.cos(x[:,2])*u)
+          )/(MTLP - MPLP*torch.cos(x[:,2])**2),  # thetaddot
+        
+        -PI_UNDER_2 * (x[:,2]-torch.pi) * x[:,3]   # theta_stat_dot],dim=1, device=device)
+    ], dim=1)
+    
+
+    return x + xdot * dt
+
+def ThetaToRedTheta(theta):
+    return (theta-torch.pi)**2/-torch.pi + torch.pi
+
 def calMPCCost(Q,R,P,u_hor:torch.tensor,x0:np.array, ModelUpdate_func, dt) -> float:
     # u 1x64x1, x0: ,state
     num_state = x0.shape[0]
@@ -480,7 +443,44 @@ def calMPCCost(Q,R,P,u_hor:torch.tensor,x0:np.array, ModelUpdate_func, dt) -> fl
             
     return cost
 
-def PickBestDiffResult( candidate_list:list ) -> torch.tensor:
+def calMPCCost_tensor(Q:torch.tensor,R:torch.tensor,P:torch.tensor,u_hor:torch.tensor,x0:torch.tensor, ModelUpdate_func, dt, device) -> float:
+    # u nsamplex64x1, x0: nsample x state, compute all the sample at the same time 
+    num_state = x0.shape[1]
+    num_u = 1
+    num_hor = u_hor.size(1)
+    cost = torch.zeros(u_hor.shape[0], device=device)
+    
+    # initial cost
+    for i in range(num_state):
+        cost = cost + Q[i][i] * x0[:,i] ** 2
+    
+    for i in range(num_u):
+        cost = cost + R[i][i] * u_hor[:,0,0] ** 2
+        
+    x_cur = x0
+    u_cur = u_hor[:,0,0]
+    IdxLastU = num_hor-1
+    # stage cost
+    for i in range(1,IdxLastU):
+        xnext = ModelUpdate_func(dt, x_cur, u_cur, device)
+        unext = u_hor[:,i,0]
+        for j in range(1,num_state):
+            cost = cost + Q[j][j] * xnext[:,j] ** 2
+        for j in range(num_u):
+            cost = cost + R[j][j] * unext ** 2
+        # update
+        u_cur = unext
+        x_cur = xnext
+        
+        
+    #final cost
+    for i in range(num_state):
+        cost = cost + P[i][i] * xnext[:,i] ** 2
+            
+            
+    return cost
+
+def PickBestDiffResult( candidate_list:torch.tensor ) -> torch.tensor:
     # candidate_list [[cost1, u_hor1],[cost2, u_hor2],...]
     num_candidate = len(candidate_list)
     best_idx = 0
@@ -489,17 +489,7 @@ def PickBestDiffResult( candidate_list:list ) -> torch.tensor:
             best_idx = i+1
     return candidate_list[best_idx][0], candidate_list[best_idx][1]
 
-
-def GenerateRandomInitialGuess(min_random, max_random):
-    u_ini_guess = np.random.uniform(min_random, max_random, 1)[0]
-    if u_ini_guess >=0:
-        x_ini_guess = 5
-    else:
-        x_ini_guess = -5
-    return u_ini_guess, x_ini_guess
-    
-
-def InferenceBy_one_method_single_IniState(nIdxIniState: int, nMethodSelect: int, cost_result_buffer: list, time_result_buffer: list,
+def InferenceBy_one_method_single_IniState(nIdxIniState: int, nMethodSelect: int, u_all_result_buffer: list,
                                            x0_red: np.array, x0_clean: np.array,
                                            Q: np.array, R: np.array, P:np.array, Hor: int,
                                            contoller: ControllerManager
@@ -510,47 +500,116 @@ def InferenceBy_one_method_single_IniState(nIdxIniState: int, nMethodSelect: int
     # control loop
     for i in range(CONTROL_STEP):
         print("method:",nMethodSelect,"Initial_state_th:",nIdxIniState, "control_step:",i,"\n")
-        u_first, Cost, time = contoller.ComputeInputAndCost(x_cur_red, x_cur_clean, Q, R, P, Hor)
+        
+        u_first = contoller.SolveMultiModalityUAndRecord(x_cur_red, x_cur_clean, Q, R, P, Hor, 
+                                                         nMethodSelect, nIdxIniState, i, u_all_result_buffer)
         x_next = EulerForwardCartpole_virtual(TS, x_cur_red, u_first)
-
-        cost_result_buffer[nMethodSelect][nIdxIniState][i] = Cost
-        time_result_buffer[nMethodSelect][nIdxIniState][i] = time
         
         # update
         x_cur_red = x_next
         x_cur_clean = torch.tensor( [x_next[0], x_next[1], x_next[4], x_next[3]] )
         
     print("method:",nMethodSelect,"Initial_state_th:",nIdxIniState, "finish! \n")
+    
+def InferenceBy_one_method_All_IniState(   nMethodSelect: int, u_all_result_buffer: list,
+                                           X0_All_red: np.array, X0_All_clean: np.array,
+                                           Q: np.array, R: np.array, P:np.array, Hor: int,
+                                           contoller: ControllerManager
+):
+# X0_All_red: MonteCarlo x 5, X0_All_clean: MonteCarlo x 4
+    x_cur_red = X0_All_red
+    x_cur_clean = X0_All_clean
+    
+    # control loop
+    for i in range(CONTROL_STEP):
+        print("method:",nMethodSelect, "control_step:",i,"\n")
+        
+        u_first = contoller.SolveMultiModalityUAndRecord(x_cur_red, x_cur_clean, Q, R, P, Hor, 
+                                                         nMethodSelect, nIdxIniState, i, u_all_result_buffer)
+        x_next = EulerForwardCartpole_virtual(TS, x_cur_red, u_first)
+        
+        # update
+        x_cur_red = x_next
+        x_cur_clean = torch.tensor( [x_next[0], x_next[1], x_next[4], x_next[3]] )
+        
+    print("method:",nMethodSelect,"Initial_state_th:",nIdxIniState, "finish! \n")
+    
+# Initialize the distributed environment
+def setup(rank, world_size):
+    os.environ['MASTER_ADDR'] = 'localhost'
+    os.environ['MASTER_PORT'] = '12355'
+    dist.init_process_group("nccl", rank=rank, world_size=world_size)
+    
+# Destroy the distributed environment
+def cleanup():
+    dist.destroy_process_group()
 
-def TestSingleInitialStateForEachMethod(Diff_ctrl, NN_ctrl, MPC_ctrl, MPCMulti_ctrl,Q, R, P, Hor):
-    CostResult_SharedMemory = list([[[0.0 for _ in range(CONTROL_STEP)] for _ in range(NUM_MONTECARLO)] for _ in range(NUM_CONTROLLER)])
-    TimeResult_SharedMemory = list([[[0.0 for _ in range(CONTROL_STEP)] for _ in range(NUM_MONTECARLO)] for _ in range(NUM_CONTROLLER)])
+    
+def RunTaskForEachGPU(rank,
+                        nIdxIniState: int, nMethodSelect: int, u_all_result_buffer: list,
+                        x0_red: np.array, x0_clean: np.array,
+                        Q: np.array, R: np.array, P:np.array, Hor: int,
+                        contoller: ControllerManager, NumGPU:int):
+    setup(rank, NumGPU)
+    # Set the device for the current process
+    device = torch.device(f"cuda:{rank}")
+    
+    # move it to the current device
+    contoller.PrepareModelForDDP(device, rank)
+    
+    # run inference and dynamic
+    InferenceBy_one_method_single_IniState(nIdxIniState, nMethodSelect, u_all_result_buffer,
+                                           x0_red, x0_clean,
+                                           Q, R, P, Hor,
+                                           contoller)
+    
+    cleanup()
+    
+
+def TestSingleInitialStateForEachMethod(Diff_ctrl,Q, R, P, Hor, U_All_SharedMemory):
     
     CtrlManager = ControllerManager()
     CtrlManager.add_stategy(Diff_ctrl)
-    CtrlManager.add_stategy(NN_ctrl)
-    CtrlManager.add_stategy(MPC_ctrl)
-    CtrlManager.add_stategy(MPCMulti_ctrl)
     
     x0 = np.random.uniform(INITIAL_X_RANGE[0], INITIAL_X_RANGE[1])
     theta0 = np.random.uniform(INITIAL_THETA_RANGE[0], INITIAL_THETA_RANGE[1])
     theta_red_0 = ThetaToRedTheta(theta0)
     X0_clean = np.array([x0, 0.0, theta_red_0, 0.0])
     X0_red = np.array([x0, 0.0, theta0, 0.0, theta_red_0])
+
     for i in range(NUM_CONTROLLER):
         CtrlManager.set_strategy(i)
-        InferenceBy_one_method_single_IniState(0, i, CostResult_SharedMemory, TimeResult_SharedMemory,
+        InferenceBy_one_method_single_IniState(0, i, U_All_SharedMemory,
                                 X0_red, X0_clean, 
                                 Q, R, P, Hor,
                                 CtrlManager)
 
+def TestAllInitialStateForOneMethod(nSelectMethod, ctrl,Q, R, P, Hor, U_All_SharedMemory):
+    CtrlManager = ControllerManager()
+    CtrlManager.add_stategy(ctrl)
+    CtrlManager.set_strategy(0)
+    
+    X0_all_clean = torch.zeros(NUM_MONTECARLO,4)
+    X0_all_red = torch.zeros(NUM_MONTECARLO,5)
+    for i in range(NUM_MONTECARLO):
+        x0 = torch.random.uniform(INITIAL_X_RANGE[0], INITIAL_X_RANGE[1])
+        theta0 = torch.random.uniform(INITIAL_THETA_RANGE[0], INITIAL_THETA_RANGE[1])
+        theta_red_0 = ThetaToRedTheta(theta0)
+        X0_clean = torch.tensor([x0, 0.0, theta_red_0, 0.0])
+        X0_red = torch.tensor([x0, 0.0, theta0, 0.0, theta_red_0])
+        X0_all_clean[i,:] = X0_clean
+        X0_all_red[i,:] = X0_red
+        
+    InferenceBy_one_method_All_IniState(nSelectMethod, U_All_SharedMemory,
+                                X0_all_red, X0_all_clean, 
+                                Q, R, P, Hor,
+                                CtrlManager)
+
+
 def main():
-    j_all_filepath = os.path.join(RESULT_SAVED_PATH,COST_ALL_FILENAME_SAVE)
-    time_all_filepath = os.path.join(RESULT_SAVED_PATH,TIME_ALL_FILENAME_SAVE)
-    j_mean_filepath = os.path.join(RESULT_SAVED_PATH,COST_MEAN_FILENAME_SAVE)
-    time_mean_filepath = os.path.join(RESULT_SAVED_PATH,TIME_MEAN_FILENAME_SAVE)
-    j_std_filepath = os.path.join(RESULT_SAVED_PATH,COST_STD_FILENAME_SAVE)
-    time_std_filepath = os.path.join(RESULT_SAVED_PATH,TIME_STD_FILENAME_SAVE)
+    
+    u_all_filepath = os.path.join(RESULT_SAVED_PATH,U_SOL_ALL)
+    num_multimodality_filepath = os.path.join(RESULT_SAVED_PATH,NUM_MULTI_MODALITY)
     if B_ISSAVE == 0:
         MAX_CORE_CPU = 2
         # MPC parameters
@@ -562,67 +621,49 @@ def main():
         
         # initialize controller
         Diff_ctrl = DiffusionController(DEVICE, DIFF_MODEL_PATH, DIFF_DATA_LOAD_PATH, DIFF_J_DATA_FILENAME, DIFF_U_DATA_FILENAME, DIFF_X0_CONDITION_DATA_NAME, DIFF_DATASET_CLASS) 
-        NN_ctrl = NNController(DEVICE, NN_MODEL_PATH, NN_DATA_LOAD_PATH, NN_J_DATA_FILENAME, NN_U_DATA_FILENAME, NN_X0_CONDITION_DATA_NAME, NN_DATASET_CLASS) 
-        MPC_ctrl = MPCController(MPC_U_RANGE)
         MPCMulti_ctrl = MPCMultiGuessController(MPC_U_RANGE)
+        U_All_SharedMemory = list([[[[0.0 for _ in range(CONTROL_STEP)] for _ in range(NUM_FIND_MULTIMODALITY)] for _ in range(NUM_MONTECARLO)] for _ in range(NUM_CONTROLLER)])
+        TestSingleInitialStateForEachMethod(Diff_ctrl, Q, R, P, HOR, U_All_SharedMemory)
         
-        TestSingleInitialStateForEachMethod(Diff_ctrl, NN_ctrl, MPC_ctrl, MPCMulti_ctrl,Q, R, P, HOR)
-        
-    #     with mp.Manager() as manager:
+        with mp.Manager() as manager:
+            # method x group x test multimodality x control step
+            U_All_SharedMemory = manager.list([ manager.list([ manager.list([ manager.list([0.0 for _ in range(CONTROL_STEP)]) for _ in range(NUM_FIND_MULTIMODALITY)]) for _ in range(NUM_MONTECARLO)]) for _ in range(NUM_CONTROLLER)])
+            Num_Multimodaity_SharedMemory = manager.list([[[0.0 for _ in range(CONTROL_STEP)] for _ in range(NUM_MONTECARLO)] for _ in range(NUM_CONTROLLER)])
             
-    #         CostResult_SharedMemory = manager.list([manager.list([manager.list([0.0 for _ in range(CONTROL_STEP)]) for _ in range(NUM_MONTECARLO)]) for _ in range(NUM_CONTROLLER)])
-    #         TimeResult_SharedMemory = manager.list([manager.list([manager.list([0.0 for _ in range(CONTROL_STEP)]) for _ in range(NUM_MONTECARLO)]) for _ in range(NUM_CONTROLLER)])
-    #         ArgList = []
-    #         for i in range(NUM_CONTROLLER):
-    #             # add contrlloer into manager
-    #             CtrlManager = ControllerManager()
-    #             CtrlManager.add_stategy(Diff_ctrl)
-    #             CtrlManager.add_stategy(NN_ctrl)
-    #             CtrlManager.add_stategy(MPC_ctrl)
-    #             CtrlManager.add_stategy(MPCMulti_ctrl)
-    #             CtrlManager.set_strategy(i)
-    #             for j in range(0,NUM_MONTECARLO):
-    #                 x0 = np.random.uniform(INITIAL_X_RANGE[0], INITIAL_X_RANGE[1])
-    #                 theta0 = np.random.uniform(INITIAL_THETA_RANGE[0], INITIAL_THETA_RANGE[1])
-    #                 theta_red_0 = ThetaToRedTheta(theta0)
-    #                 X0_clean = np.array([x0, 0.0, theta_red_0, 0.0])
-    #                 X0_red = np.array([x0, 0.0, theta0, 0.0, theta_red_0])
-                
-                
-    #                 ArgList.append((j, i, CostResult_SharedMemory, TimeResult_SharedMemory,
-    #                                 X0_red, X0_clean, 
-    #                                 Q, R, P, HOR,
-    #                                 CtrlManager))
-            
-    #         print("start generate data \n")
-    #         with mp.Pool(processes=MAX_CORE_CPU) as pool:
-    #             pool.starmap(InferenceBy_one_method_single_IniState, ArgList)
-            
-    #         j_all = np.array(CostResult_SharedMemory)
-    #         time_all = np.array(TimeResult_SharedMemory)
-    #         j_mean = np.array(NUM_CONTROLLER, CONTROL_STEP)
-    #         time_mean = np.array(NUM_CONTROLLER, CONTROL_STEP)
-    #         j_std = np.array(NUM_CONTROLLER, CONTROL_STEP)
-    #         time_std = np.array(NUM_CONTROLLER, CONTROL_STEP)
+            # test
             
             
-    #         # do statistic 
-    #         for i in range( NUM_CONTROLLER ):
-    #             j_singleCtrl = j_all[i,:,:]
-    #             time_singleCtrl = time_all[i,:,:]
-    #             j_mean[i,:] = np.mean(j_singleCtrl, axis=0)
-    #             j_std[i,:] = np.std(j_singleCtrl, axis=0)
-    #             time_mean[i,:] = np.mean(time_singleCtrl, axis=0)
-    #             time_std[i,:] = np.std(time_singleCtrl, axis=0)
+            ArgList = []
             
-    #         np.save(j_all_filepath, j_all)
-    #         np.save(time_all_filepath, time_all)
-    #         np.save(j_mean_filepath, j_mean)
-    #         np.save(time_mean_filepath, time_mean)
-    #         np.save(j_std_filepath, j_std)
-    #         np.save(time_std_filepath, time_std)
+            CtrlManager = ControllerManager()
+            CtrlManager.add_stategy(Diff_ctrl)
+            CtrlManager.set_strategy(0)
+            for i in range(N_GPU):
+                for j in range(int(NUM_MONTECARLO/N_GPU)):
+                    ArgList.append()
             
-    #         print("save data finsih")
+            for i in range(NUM_CONTROLLER):
+                CtrlManager = ControllerManager()
+                CtrlManager.add_stategy(Diff_ctrl)
+                CtrlManager.set_strategy(i)
+                for j in range(0,NUM_MONTECARLO):
+                    x0 = np.random.uniform(INITIAL_X_RANGE[0], INITIAL_X_RANGE[1])
+                    theta0 = np.random.uniform(INITIAL_THETA_RANGE[0], INITIAL_THETA_RANGE[1])
+                    theta_red_0 = ThetaToRedTheta(theta0)
+                    X0_clean = np.array([x0, 0.0, theta_red_0, 0.0])
+                    X0_red = np.array([x0, 0.0, theta0, 0.0, theta_red_0])
+                    ArgList.append((j, i, U_All_SharedMemory,
+                                    X0_red, X0_clean, 
+                                    Q, R, P, HOR,
+                                    CtrlManager, N_GPU))
+            mp.spawn(RunTaskForEachGPU, ArgList, nprocs=N_GPU, join=True)
+            
+            
+            U_all = np.array(U_All_SharedMemory)
+            np.save(u_all_filepath, U_all)
+            u_test = np.load(u_all_filepath)
+            print("test finish")
+            
     
     # if B_ISSAVE == 1:
     #     j_all = np.load(j_all_filepath)

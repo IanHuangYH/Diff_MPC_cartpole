@@ -10,15 +10,19 @@ import numpy as np
 # modify
 DATASET = 'NMPC_UJ_Dataset'
 J_NORMALIZER = 'LogZScoreNormalizer' #GaussianNormalizer, LimitsNormalizer, LogMinMaxNormalizer, LogZScoreNormalizer, OnlyLogNormalizer, GaussianMinMaxNormalizer
-UX_NORMALIZER = 'GaussianNormalizer'
-MODEL_FOLDER = 'nmpc_batch_4096_random112500_float64_zscore_xu_logzscore_j_decay1_ulimit6000'
+UX_NORMALIZER = 'LimitsNormalizer'
+MODEL_FOLDER = 'nmpc_batch_4096_random112500_float64_minmax_xu_logzscore_j_decay1_ulimit6000'
+DATA_FOLDER = 'Random_also_noisedata_decayguess1_112500_ulimit6000'
+
+DEBUG = 1
+model_list = [16000]
+
+
+
+# path
+DATA_LOAD_PATH = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/training_data/CartPole-NMPC/'+DATA_FOLDER
 RESULT_SAVED_PATH = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/model_performance_saving/'
 MODEL_SAVED_PATH = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/data_trained_models/'+MODEL_FOLDER
-DATA_LOAD_PATH = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/training_data/CartPole-NMPC/Random_also_noisedata_decayguess1_112500_ulimit6000'
-DEBUG = 1
-
-
-model_list = [16000]
 MODEL_PATH = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/data_trained_models/'+str(MODEL_FOLDER)+'/'+ str(model_list[0])
 
 INITILA_X = 10
@@ -221,14 +225,13 @@ for i in range(0,Data_Num):
     if DEBUG:
         x_red[0] = -0.47
         x_red[1] = 0
-        x_red[2] = 5*np.pi/4
+        x_red[2] = 3*np.pi/4
         x_red[3] = 0
     theta_red = ThetaToRedTheta(x_red[2])
     
         
     
-    x_condition = torch.tensor([x_red[0], x_red[1], theta_red, x_red[3]], device=device)
-    x_GT_unnor = x_condition.unsqueeze(0)
+    x_GT_unnor = torch.tensor([x_red[0], x_red[1], theta_red, x_red[3]], device=device)
     u_GT_unnor = u_data[i,:,0]
     j_GT_unnor = j_data[i]
     

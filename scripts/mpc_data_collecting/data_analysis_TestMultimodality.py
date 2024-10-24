@@ -3,8 +3,6 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
-import seaborn as sns
-import pandas as pd
 
 
 NUM_PLOT_IN_ONE_GROUP = 10
