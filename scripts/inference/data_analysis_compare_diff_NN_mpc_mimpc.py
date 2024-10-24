@@ -39,7 +39,7 @@ DIFF_UX_NORMALIZER = 'GaussianNormalizer'
 # NN modify
 NN_MODEL_FOLDER = 'NN_120000_random_decayguess1'
 NN_DATA_LOAD_FOLER = 'Random_also_noisedata_decayguess1_112500' # NN
-NN_DATASET_CLASS = 'InputsDataset'
+NN_DATASET_CLASS = 'NMPC_4DOF_DATASET' #NMPC_4DOF_DATASET
 NN_INITILA_X = 10 #10, 5
 NN_INITIAL_THETA = 15 #15, 6
 NN_NOISE_NUM = 15 #15, 3
@@ -94,7 +94,7 @@ DIFF_U_DATA_FILENAME = 'u' + Diff_filename_idx
 DIFF_J_DATA_FILENAME = 'j' + Diff_filename_idx
 
 NN_filename_idx = '_ini_'+str(NN_INITILA_X)+'x'+str(NN_INITIAL_THETA)+'_noise_'+str(NN_NOISE_NUM)+'_step_'+str(CONTROL_STEP)+'_hor_'+str(HOR)+'.pt'
-NN_X0_CONDITION_DATA_NAME = 'x0_4DOF_' + NN_filename_idx
+NN_X0_CONDITION_DATA_NAME = 'x0_4DOF' + NN_filename_idx
 NN_U_DATA_FILENAME = 'u' + NN_filename_idx
 NN_J_DATA_FILENAME = 'j' + NN_filename_idx
 
@@ -248,14 +248,13 @@ class NNController(MPCBasedController):
         tensor_args = {'device': device, 'dtype': torch.float32}
         train_subset, train_dataloader, val_subset, val_dataloader = get_dataset(
             dataset_class=NNDatasetClass,
-            dataset_subdir = NN_SUB_DIR,
             j_normalizer=NN_J_NORMALIZER,
             train_data_load_path = train_data_load_path,
             j_filename=j_filename,
             u_filename = u_filename,
             x0_filename = x0_filename,
             ux_normalizer = NN_UX_NORMALIZER,
-            tensor_args=tensor_args
+            tensor_args=tensor_args,
             )
         self.m_dataset = train_subset.dataset
         print(f'dataset -- {len(self.m_dataset)}')
@@ -274,7 +273,7 @@ class NNController(MPCBasedController):
             map_location=tensor_args['device'])
         )
         model = model.to(device)
-        model = torch.compile(model)
+        # model = torch.compile(model)
         self.m_model = model.eval()
         self.m_device = device
         
@@ -625,77 +624,77 @@ def main():
         MPC_ctrl = MPCController(MPC_U_RANGE)
         MPCMulti_ctrl = MPCMultiGuessController(MPC_U_RANGE)
         
-        # TestSingleInitialStateForEachMethod(Diff_ctrl, NN_ctrl, MPC_ctrl, MPCMulti_ctrl,Q, R, P, HOR)
+        TestSingleInitialStateForEachMethod(Diff_ctrl, NN_ctrl, MPC_ctrl, MPCMulti_ctrl,Q, R, P, HOR)
         
-        with mp.Manager() as manager:
+    #     with mp.Manager() as manager:
             
-            CostResult_SharedMemory = manager.list([[[0.0 for _ in range(CONTROL_STEP)] for _ in range(NUM_MONTECARLO)] for _ in range(NUM_CONTROLLER)])
-            TimeResult_SharedMemory = manager.list([[[0.0 for _ in range(CONTROL_STEP)] for _ in range(NUM_MONTECARLO)] for _ in range(NUM_CONTROLLER)])
-            ArgList = []
-            for i in range(NUM_CONTROLLER):
-                # add contrlloer into manager
-                CtrlManager = ControllerManager()
-                CtrlManager.add_stategy(Diff_ctrl)
-                CtrlManager.add_stategy(NN_ctrl)
-                CtrlManager.add_stategy(MPC_ctrl)
-                CtrlManager.add_stategy(MPCMulti_ctrl)
-                CtrlManager.set_strategy(i)
-                for j in range(0,NUM_MONTECARLO):
-                    x0 = np.random.uniform(INITIAL_X_RANGE[0], INITIAL_X_RANGE[1])
-                    theta0 = np.random.uniform(INITIAL_THETA_RANGE[0], INITIAL_THETA_RANGE[1])
-                    theta_red_0 = ThetaToRedTheta(theta0)
-                    X0_clean = np.array([x0, 0.0, theta_red_0, 0.0])
-                    X0_red = np.array([x0, 0.0, theta0, 0.0, theta_red_0])
+    #         CostResult_SharedMemory = manager.list([[[0.0 for _ in range(CONTROL_STEP)] for _ in range(NUM_MONTECARLO)] for _ in range(NUM_CONTROLLER)])
+    #         TimeResult_SharedMemory = manager.list([[[0.0 for _ in range(CONTROL_STEP)] for _ in range(NUM_MONTECARLO)] for _ in range(NUM_CONTROLLER)])
+    #         ArgList = []
+    #         for i in range(NUM_CONTROLLER):
+    #             # add contrlloer into manager
+    #             CtrlManager = ControllerManager()
+    #             CtrlManager.add_stategy(Diff_ctrl)
+    #             CtrlManager.add_stategy(NN_ctrl)
+    #             CtrlManager.add_stategy(MPC_ctrl)
+    #             CtrlManager.add_stategy(MPCMulti_ctrl)
+    #             CtrlManager.set_strategy(i)
+    #             for j in range(0,NUM_MONTECARLO):
+    #                 x0 = np.random.uniform(INITIAL_X_RANGE[0], INITIAL_X_RANGE[1])
+    #                 theta0 = np.random.uniform(INITIAL_THETA_RANGE[0], INITIAL_THETA_RANGE[1])
+    #                 theta_red_0 = ThetaToRedTheta(theta0)
+    #                 X0_clean = np.array([x0, 0.0, theta_red_0, 0.0])
+    #                 X0_red = np.array([x0, 0.0, theta0, 0.0, theta_red_0])
                 
                 
-                    ArgList.append((j, i, CostResult_SharedMemory, TimeResult_SharedMemory,
-                                    X0_red, X0_clean, 
-                                    Q, R, P, HOR,
-                                    CtrlManager))
+    #                 ArgList.append((j, i, CostResult_SharedMemory, TimeResult_SharedMemory,
+    #                                 X0_red, X0_clean, 
+    #                                 Q, R, P, HOR,
+    #                                 CtrlManager))
             
-            print("start generate data \n")
-            with mp.Pool(processes=MAX_CORE_CPU) as pool:
-                pool.starmap(InferenceBy_one_method_single_IniState, ArgList)
+    #         print("start generate data \n")
+    #         with mp.Pool(processes=MAX_CORE_CPU) as pool:
+    #             pool.starmap(InferenceBy_one_method_single_IniState, ArgList)
             
-            j_all = np.array(CostResult_SharedMemory)
-            time_all = np.array(TimeResult_SharedMemory)
-            j_mean = np.array(NUM_CONTROLLER, CONTROL_STEP)
-            time_mean = np.array(NUM_CONTROLLER, CONTROL_STEP)
-            j_std = np.array(NUM_CONTROLLER, CONTROL_STEP)
-            time_std = np.array(NUM_CONTROLLER, CONTROL_STEP)
+    #         j_all = np.array(CostResult_SharedMemory)
+    #         time_all = np.array(TimeResult_SharedMemory)
+    #         j_mean = np.array(NUM_CONTROLLER, CONTROL_STEP)
+    #         time_mean = np.array(NUM_CONTROLLER, CONTROL_STEP)
+    #         j_std = np.array(NUM_CONTROLLER, CONTROL_STEP)
+    #         time_std = np.array(NUM_CONTROLLER, CONTROL_STEP)
             
             
-            # do statistic 
-            for i in range( NUM_CONTROLLER ):
-                j_singleCtrl = j_all[i,:,:]
-                time_singleCtrl = time_all[i,:,:]
-                j_mean[i,:] = np.mean(j_singleCtrl, axis=0)
-                j_std[i,:] = np.std(j_singleCtrl, axis=0)
-                time_mean[i,:] = np.mean(time_singleCtrl, axis=0)
-                time_std[i,:] = np.std(time_singleCtrl, axis=0)
+    #         # do statistic 
+    #         for i in range( NUM_CONTROLLER ):
+    #             j_singleCtrl = j_all[i,:,:]
+    #             time_singleCtrl = time_all[i,:,:]
+    #             j_mean[i,:] = np.mean(j_singleCtrl, axis=0)
+    #             j_std[i,:] = np.std(j_singleCtrl, axis=0)
+    #             time_mean[i,:] = np.mean(time_singleCtrl, axis=0)
+    #             time_std[i,:] = np.std(time_singleCtrl, axis=0)
             
-            np.save(j_all_filepath, j_all)
-            np.save(time_all_filepath, time_all)
-            np.save(j_mean_filepath, j_mean)
-            np.save(time_mean_filepath, time_mean)
-            np.save(j_std_filepath, j_std)
-            np.save(time_std_filepath, time_std)
+    #         np.save(j_all_filepath, j_all)
+    #         np.save(time_all_filepath, time_all)
+    #         np.save(j_mean_filepath, j_mean)
+    #         np.save(time_mean_filepath, time_mean)
+    #         np.save(j_std_filepath, j_std)
+    #         np.save(time_std_filepath, time_std)
             
-            print("save data finsih")
+    #         print("save data finsih")
     
-    if B_ISSAVE == 1:
-        j_all = np.load(j_all_filepath)
-        j_mean = np.load(j_mean_filepath)
-        j_std = np.load(j_std_filepath)
-        time_all = np.load(time_all_filepath)
-        time_mean = np.load(time_mean_filepath)
-        time_std = np.load(time_std_filepath)
-        print("j_all.shape:",j_all.shape)
-        print("j_mean.shape:",j_mean.shape)
-        print("j_std.shape:",j_std.shape)
-        print("time_all.shape:",time_all.shape)
-        print("time_mean.shape:",time_mean.shape)
-        print("time_std.shape:",time_std.shape)
+    # if B_ISSAVE == 1:
+    #     j_all = np.load(j_all_filepath)
+    #     j_mean = np.load(j_mean_filepath)
+    #     j_std = np.load(j_std_filepath)
+    #     time_all = np.load(time_all_filepath)
+    #     time_mean = np.load(time_mean_filepath)
+    #     time_std = np.load(time_std_filepath)
+    #     print("j_all.shape:",j_all.shape)
+    #     print("j_mean.shape:",j_mean.shape)
+    #     print("j_std.shape:",j_std.shape)
+    #     print("time_all.shape:",time_all.shape)
+    #     print("time_mean.shape:",time_mean.shape)
+    #     print("time_std.shape:",time_std.shape)
         
         
     
