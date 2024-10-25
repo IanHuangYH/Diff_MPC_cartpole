@@ -392,12 +392,20 @@ class GaussianDiffusionModel(nn.Module, ABC):
         return trajs_chain_normalized[-1]
     
     def run_CFG(self, context=None, hard_conds=None, context_weight = 0.1, n_samples=1, horizon =8, return_chain=False, **diffusion_kwargs):
-        # context is 1x4 with 2d tensor
+        # context is 4 with 1d tensor or n x 4 2d tensor
         context = copy(context)
         self.w = context_weight
-                
+        
+        # extend context
         if context is not None:
-            context = einops.repeat(context, 'd -> b d', b=n_samples)
+            if context.ndimension() == 1:
+                context = einops.repeat(context, 'd -> b d', b=n_samples)
+            elif context.ndimension() == 2:
+                nScale = int(n_samples/context.shape[0])
+                context = context.repeat_interleave(nScale, dim=0)
+            else:
+                print("error")
+                return
 
         # Sample from diffusion model
         samples, chain = self.cart_pole_sample(

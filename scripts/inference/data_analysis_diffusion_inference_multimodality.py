@@ -7,10 +7,12 @@ import matplotlib.pyplot as plt
 import matplotlib
 matplotlib.use('Agg')
 import torch
+from torch.utils.data import DataLoader
 
 from mpd.models import ConditionedTemporalUnet, UNET_DIM_MULTS, diffusion_model_base
 from mpd.models.diffusion_models.sample_functions import guide_gradient_steps, ddpm_sample_fn, ddpm_cart_pole_sample_fn
 from mpd.trainer import get_dataset, get_model
+from mpd.datasets import nmpc_test_data
 from mpd.utils.loading import load_params_from_yaml
 from torch_robotics.torch_utils.seed import fix_random_seed
 from torch_robotics.torch_utils.torch_utils import get_torch_device, freeze_torch_model_params
@@ -40,13 +42,15 @@ OPT_SETTING = {'ipopt.max_iter':20000, 'ipopt.acceptable_tol':1e-8, 'ipopt.accep
 CONTROL_STEP = 50
 HOR = 64
 NUM_FIND_MULTIMODALITY = 20
+U_THRESHOLD_MULTIMODAILTY = 20
+
 
 DEVICE = 'cuda'
-NUM_CONTROLLER = 1
-B_ISSAVE = 0
-N_GPU = torch.cuda.device_count()
-N_DATA_SCALE = 15
-NUM_MONTECARLO = N_GPU * N_DATA_SCALE
+NUM_CONTROLLER = 2
+B_ISSAVE = 1
+NUM_MONTECARLO = 100
+MAX_GRP = 10000
+GRP_SIZE = min(NUM_MONTECARLO, MAX_GRP)
 
 # monte carlo initial state sample range
 INITIAL_X_RANGE = np.array([-3,3])
@@ -54,8 +58,10 @@ INITIAL_THETA_RANGE = np.array([1.8,4.4])
 
 # result filename
 RESULT_SAVED_PATH = os.path.join('/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/model_performance_saving',DIFF_MODEL_FOLDER,str(DIFF_MODEL_CHECKPOINT))
-U_SOL_ALL = 'analysis_diff_infe_all_u.npy'
-NUM_MULTI_MODALITY = 'analysis_diff_num_multimodality.npy'
+U_SOL_DIFF_ALL = 'analysis_diff_infe_all_u.npy'
+U_DISTANCE_DIFF_ALL = 'analysis_diff_infe_all_u_distance.npy'
+NUM_MULTI_MODALITY_DIFF = 'analysis_diff_num_multimodality.npy'
+FIG_MULTI_MODALITY_DIFF = 'diffusion_inference_multi_modality.png'
 # path
 DIFF_MODEL_PATH = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/data_trained_models/'+DIFF_MODEL_FOLDER+'/'+str(DIFF_MODEL_CHECKPOINT)
 DIFF_DATA_LOAD_PATH = '/MPC_DynamicSys/code/cart_pole_diffusion_based_on_MPD/training_data/CartPole-NMPC/'+DIFF_DATA_LOAD_FOLER
@@ -96,8 +102,9 @@ class MPCBasedController(ABC):
         # x_cur_red, x_cur_clean are 1D array with 5 and 4 seperately
         pass
     
-    def SolveMultiModalityUAndRecord(self:np.array, x_cur_red:np.array, x_cur_clean:np.array, Q:np.array, R:np.array, P:np.array, Hor:int, 
-                                     nIdxMethod: int, nIdxIniStateGrp: int, nIdxContrlStep:int, u_buffer:list):
+    def SolveMultiModailtyUAndRecordForBatch(self, x_cur_red:torch.tensor, x_cur_clean:torch.tensor, Q:torch.tensor, R:torch.tensor, P:torch.tensor, Hor:int, 
+                                             nIdxMethod: int, nGuessNum: int,
+                                             batch_idx: torch.tensor, nIdxContrlStep:int, u_buffer:list):
         pass
     
     def PrepareModelForDDP(self, device, rank):
@@ -167,14 +174,14 @@ class DiffusionController(MPCBasedController):
         
     def SolveUThenGetCost(self, x_cur_red:np.array, x_cur_clean:np.array, Q:np.array, R:np.array, P:np.array, Hor:int ):
         FindGlobal_list = []
-        for j in range(NUM_FIND_MULTIMODALITY):
+        for i in range(NUM_FIND_MULTIMODALITY):
             tensor = torch.randn(1, Hor, 1)  # Create a 1x64x1 tensor
             FindGlobal_list.append([0, tensor])
         x0_tensor = torch.tensor(x_cur_clean).to(self.m_device)
         x0_strd = self.m_dataset.normalize_condition(x0_tensor)
         
         starttime = time.time()
-        for j in range(NUM_FIND_MULTIMODALITY):
+        for i in range(NUM_FIND_MULTIMODALITY):
             with torch.no_grad():
                 u_normalized_iters = self.m_model.run_CFG(
                     x0_strd, None, WEIGHT_GUIDANC,
@@ -186,8 +193,8 @@ class DiffusionController(MPCBasedController):
                 u_iters = self.m_dataset.unnormalize_states(u_normalized_iters[:,:,0:Hor,:])
                 u_final_iter_candidate = u_iters[-1].cpu()
                             
-            FindGlobal_list[j][0] = calMPCCost(Q,R,P,u_final_iter_candidate, x_cur_red, EulerForwardCartpole_virtual, TS)
-            FindGlobal_list[j][1] = u_final_iter_candidate
+            FindGlobal_list[i][0] = calMPCCost(Q,R,P,u_final_iter_candidate, x_cur_red, EulerForwardCartpole_virtual, TS)
+            FindGlobal_list[i][1] = u_final_iter_candidate
         endtime = time.time()
                 
         Cost, u_best_cand = PickBestDiffResult(FindGlobal_list)
@@ -195,23 +202,30 @@ class DiffusionController(MPCBasedController):
         deltaTime = endtime - starttime
         return u_first, Cost.item(), deltaTime
     
-    def SolveMultiModalityUAndRecord(self:np.array, x_cur_red:np.array, x_cur_clean:np.array, Q:np.array, R:np.array, P:np.array, Hor:int, 
-                                     nIdxMethod: int, nIdxIniStateGrp: int, nIdxContrlStep:int, u_buffer:list):
-        Q_tensor = torch.tensor(Q, device=self.m_device)
-        R_tensor = torch.tensor(R, device=self.m_device)
-        P_tensor = torch.tensor(P, device=self.m_device)
+    def SolveMultiModailtyUAndRecordForBatch(self, x_cur_red:torch.tensor, x_cur_clean:torch.tensor, 
+                                             Q:torch.tensor, R:torch.tensor, P:torch.tensor, Hor:int, 
+                                             nIdxMethod: int, nGuessNum: int, 
+                                             batch_idx: torch.tensor, nIdxContrlStep:int, u_buffer:list):
+        # return u [datanum]
+        datanum = batch_idx.shape[0]
+        u_first = torch.zeros(datanum)
+        Cost = torch.zeros(datanum)
         
-        FindGlobal_list = torch.zeros(NUM_FIND_MULTIMODALITY, 2, device=self.m_device)
+        InputTensorArg = [x_cur_red, x_cur_clean, Q, R, P]
+        x_cur_red, x_cur_clean, Q, R, P = self.__PutTensorIntoDevice(InputTensorArg)
         
-        x0_clean_tensor = torch.tensor(x_cur_clean).to(self.m_device)
-        x0_red_tensor = torch.tensor(x_cur_red).to(self.m_device)
-        x0_strd = self.m_dataset.normalize_condition(x0_clean_tensor)
-        x0_red_tensor_extend = x0_red_tensor.unsqueeze(0).repeat(NUM_FIND_MULTIMODALITY, 1) 
         
+        Sample_batch = nGuessNum * datanum # batch = datanum * nGuessNum
+        FindGlobal_list = torch.zeros(Sample_batch, 2, device=self.m_device)
+        
+        x0_strd: torch.tensor = self.m_dataset.normalize_condition(x_cur_clean) # datanum x 4
+        x0_red_extend = x_cur_red.repeat_interleave(nGuessNum, dim=0) # (datanum x nGuessNum) x 5
+        
+        starttime = time.time()
         with torch.no_grad():
             u_normalized_iters = self.m_model.run_CFG(
                 x0_strd, None, WEIGHT_GUIDANC,
-                n_samples=NUM_FIND_MULTIMODALITY, horizon=Hor,
+                n_samples=Sample_batch, horizon=Hor, # n_sample = datanum x nGuessNum = batch
                 return_chain=True,
                 sample_fn=ddpm_cart_pole_sample_fn,
                 n_diffusion_steps_without_noise=5,
@@ -219,17 +233,32 @@ class DiffusionController(MPCBasedController):
             u_iters = self.m_dataset.unnormalize_states(u_normalized_iters[:,:,0:Hor,:]) # iter x n_sample x Hor x 1
             u_final_iter_candidate = u_iters[-1] # n_sample x Hor x 1
             
-            
-            FindGlobal_list[:,0] = calMPCCost_tensor(Q_tensor,R_tensor,P_tensor,u_final_iter_candidate, x0_red_tensor_extend, EulerForwardCartpole_virtual_tensor, TS, self.m_device)
-            FindGlobal_list[:,1] = u_final_iter_candidate[:,0,0]
+        FindGlobal_list[:,0] = calMPCCost_tensor(Q,R,P,u_final_iter_candidate, x0_red_extend, EulerForwardCartpole_virtual_tensor, TS, self.m_device)
+        FindGlobal_list[:,1] = u_final_iter_candidate[:,0,0]
         
-        Cost, u_best_cand = PickBestDiffResult(FindGlobal_list)
-        u_first = u_best_cand.item()
         
-        for j in range(NUM_FIND_MULTIMODALITY):
-            u_buffer[nIdxMethod][nIdxIniStateGrp][j][nIdxContrlStep] = FindGlobal_list[j,0].item()
+        for i in batch_idx:
+            startIdx = i*nGuessNum
+            endIdx = startIdx + nGuessNum
+            Cost_cand, u_best_cand = PickBestDiffResult(FindGlobal_list[startIdx:endIdx,:])
+            u_first[i] = u_best_cand
+            Cost[i] = Cost_cand
+        endtime = time.time()
+        TotalTime = (endtime - starttime)
+        
+        for i in batch_idx:
+            for j in range(nGuessNum):
+                idx_data = i * nGuessNum + j
+                u_buffer[nIdxMethod][i][j][nIdxContrlStep] = FindGlobal_list[idx_data,1].item()
 
-        return u_first
+        return u_first, TotalTime, Cost
+        
+        
+    def __PutTensorIntoDevice(self, TensorDataList):
+        for i in range(len(TensorDataList)):
+            TensorDataList[i] = TensorDataList[i].to(self.m_device)
+            
+        return TensorDataList
     
     def PrepareModelForDDP(self, device, rank):
         self.m_model.to(device)
@@ -283,15 +312,11 @@ class ControllerManager:
         u, cost, time = self.m_Strategy.SolveUThenGetCost(x_cur_red, x_cur_clean, Q, R, P, Hor)
         return u, cost, time
     
-    def SolveMultiModalityUAndRecord(self, x_cur_red:np.array, x_cur_clean:np.array, Q:np.array, R:np.array, P:np.array, Hor:int, 
-                                     nIdxMethod: int, nIdxIniStateGrp: int, nIdxContrlStep:int, u_buffer:list ):
-        return self.m_Strategy.SolveMultiModalityUAndRecord(x_cur_red, x_cur_clean, Q, R, P, Hor, nIdxMethod, nIdxIniStateGrp, nIdxContrlStep, u_buffer)
-    
-    def SolveMultiModalityUAndRecordForAllIniState(self, x_cur_red:torch.tensor, x_cur_clean:torch.tensor, Q:torch.tensor, R:torch.tensor, P:torch.tensor, Hor:int, 
-                                     nIdxMethod: int, nIdxContrlStep:int, u_buffer:list ):
-        return 
-    def PrepareModelForDDP(self, device, rank):
-        self.m_Strategy.PrepareModelForDDP(device, rank)
+    def SolveMultiModailtyUAndRecordForBatch(self, x_cur_red:torch.tensor, x_cur_clean:torch.tensor, 
+                                             Q:torch.tensor, R:torch.tensor, P:torch.tensor, Hor:int, 
+                                             nIdxMethod: int, nGuessNum: int, batch_idx: torch.tensor, nIdxContrlStep:int, u_buffer:list):
+        return self.m_Strategy.SolveMultiModailtyUAndRecordForBatch(x_cur_red, x_cur_clean, Q, R, P, Hor, nIdxMethod, nGuessNum, batch_idx, nIdxContrlStep, u_buffer)
+
     
 def EulerForwardCartpole_virtual_Casadi(dynamic_update_virtual_Casadi, dt, x,u) -> ca.vertcat:
     xdot = dynamic_update_virtual_Casadi(x,u)
@@ -382,7 +407,7 @@ def EulerForwardCartpole_virtual(dt, x,u) -> np.array:
     ])
     return x + xdot * dt
 
-def EulerForwardCartpole_virtual_tensor(dt, x:torch.tensor,u:torch.tensor, device:torch.device) -> torch.tensor:
+def EulerForwardCartpole_virtual_tensor(dt, x:torch.tensor,u:torch.tensor) -> torch.tensor:
 # x: n_sample x 5 x 1, u: n_sample
     xdot = torch.stack([
         x[:,1],            # xdot 
@@ -462,7 +487,7 @@ def calMPCCost_tensor(Q:torch.tensor,R:torch.tensor,P:torch.tensor,u_hor:torch.t
     IdxLastU = num_hor-1
     # stage cost
     for i in range(1,IdxLastU):
-        xnext = ModelUpdate_func(dt, x_cur, u_cur, device)
+        xnext = ModelUpdate_func(dt, x_cur, u_cur)
         unext = u_hor[:,i,0]
         for j in range(1,num_state):
             cost = cost + Q[j][j] * xnext[:,j] ** 2
@@ -481,135 +506,81 @@ def calMPCCost_tensor(Q:torch.tensor,R:torch.tensor,P:torch.tensor,u_hor:torch.t
     return cost
 
 def PickBestDiffResult( candidate_list:torch.tensor ) -> torch.tensor:
-    # candidate_list [[cost1, u_hor1],[cost2, u_hor2],...]
+    # candidate_list [[cost1, u1],[cost2, u2],...]
     num_candidate = len(candidate_list)
     best_idx = 0
     for i in range(num_candidate-1):
         if( candidate_list[i+1][0] < candidate_list[best_idx][0] ):
             best_idx = i+1
     return candidate_list[best_idx][0], candidate_list[best_idx][1]
-
-def InferenceBy_one_method_single_IniState(nIdxIniState: int, nMethodSelect: int, u_all_result_buffer: list,
-                                           x0_red: np.array, x0_clean: np.array,
-                                           Q: np.array, R: np.array, P:np.array, Hor: int,
-                                           contoller: ControllerManager
+    
+def InferenceBy_one_method_All_IniState(   nMethodSelect: int, nGuessNum:int, u_all_result_buffer: list, Time_Diff_All_Sharedmemory:list, J_Diff_All_Sharedmemory:list,
+                                           Grp_data: dict, GrpData_idx: torch.tensor,
+                                           Q: torch.tensor, R: torch.tensor, P:torch.tensor, Hor: int, contoller: ControllerManager
 ):
-    x_cur_red = x0_red
-    x_cur_clean = x0_clean
+    # X0_All_red: grp x 5, X0_All_clean: grp x 4
+    x_cur_red = Grp_data['red']
+    x_cur_clean = Grp_data['clean']
+    nDatanum = x_cur_red.shape[0]
+    MapRedToClean = [0, 1, 4, 3]
     
-    # control loop
-    for i in range(CONTROL_STEP):
-        print("method:",nMethodSelect,"Initial_state_th:",nIdxIniState, "control_step:",i,"\n")
-        
-        u_first = contoller.SolveMultiModalityUAndRecord(x_cur_red, x_cur_clean, Q, R, P, Hor, 
-                                                         nMethodSelect, nIdxIniState, i, u_all_result_buffer)
-        x_next = EulerForwardCartpole_virtual(TS, x_cur_red, u_first)
-        
-        # update
-        x_cur_red = x_next
-        x_cur_clean = torch.tensor( [x_next[0], x_next[1], x_next[4], x_next[3]] )
-        
-    print("method:",nMethodSelect,"Initial_state_th:",nIdxIniState, "finish! \n")
-    
-def InferenceBy_one_method_All_IniState(   nMethodSelect: int, u_all_result_buffer: list,
-                                           X0_All_red: np.array, X0_All_clean: np.array,
-                                           Q: np.array, R: np.array, P:np.array, Hor: int,
-                                           contoller: ControllerManager
-):
-# X0_All_red: MonteCarlo x 5, X0_All_clean: MonteCarlo x 4
-    x_cur_red = X0_All_red
-    x_cur_clean = X0_All_clean
-    
-    # control loop
+    # control loop, state dim = grp x 5, u dim = grp 
     for i in range(CONTROL_STEP):
         print("method:",nMethodSelect, "control_step:",i,"\n")
         
-        u_first = contoller.SolveMultiModalityUAndRecord(x_cur_red, x_cur_clean, Q, R, P, Hor, 
-                                                         nMethodSelect, nIdxIniState, i, u_all_result_buffer)
-        x_next = EulerForwardCartpole_virtual(TS, x_cur_red, u_first)
+        u_first, TimeForGrpData, Cost = contoller.SolveMultiModailtyUAndRecordForBatch(x_cur_red, x_cur_clean, Q, R, P, Hor, 
+                                                                        nMethodSelect, nGuessNum, 
+                                                                        GrpData_idx, i, u_all_result_buffer)
+        x_next = EulerForwardCartpole_virtual_tensor(TS, x_cur_red, u_first)
         
+        # store data
+        for j in GrpData_idx:
+            Time_Diff_All_Sharedmemory[nMethodSelect][j][i] = TimeForGrpData
+            J_Diff_All_Sharedmemory[nMethodSelect][j][i] = Cost[j]
         # update
         x_cur_red = x_next
-        x_cur_clean = torch.tensor( [x_next[0], x_next[1], x_next[4], x_next[3]] )
+        x_cur_clean = x_cur_red[:, MapRedToClean]
         
-    print("method:",nMethodSelect,"Initial_state_th:",nIdxIniState, "finish! \n")
-    
-# Initialize the distributed environment
-def setup(rank, world_size):
-    os.environ['MASTER_ADDR'] = 'localhost'
-    os.environ['MASTER_PORT'] = '12355'
-    dist.init_process_group("nccl", rank=rank, world_size=world_size)
-    
-# Destroy the distributed environment
-def cleanup():
-    dist.destroy_process_group()
+    print("method:",nMethodSelect, "finish! \n")
 
-    
-def RunTaskForEachGPU(rank,
-                        nIdxIniState: int, nMethodSelect: int, u_all_result_buffer: list,
-                        x0_red: np.array, x0_clean: np.array,
-                        Q: np.array, R: np.array, P:np.array, Hor: int,
-                        contoller: ControllerManager, NumGPU:int):
-    setup(rank, NumGPU)
-    # Set the device for the current process
-    device = torch.device(f"cuda:{rank}")
-    
-    # move it to the current device
-    contoller.PrepareModelForDDP(device, rank)
-    
-    # run inference and dynamic
-    InferenceBy_one_method_single_IniState(nIdxIniState, nMethodSelect, u_all_result_buffer,
-                                           x0_red, x0_clean,
-                                           Q, R, P, Hor,
-                                           contoller)
-    
-    cleanup()
-    
 
-def TestSingleInitialStateForEachMethod(Diff_ctrl,Q, R, P, Hor, U_All_SharedMemory):
+def TestMultiModalityForDiff(nDataNum:int, nSelectMethod:int, nGuessNum:int, ctrl:MPCBasedController, 
+                             Q:np.array, R:np.array, P:np.array, Hor:int, 
+                             U_All_SharedMemory:list, Time_Diff_All_Sharedmemory:list, J_Diff_All_Sharedmemory:list):
+    # U_All_SharedMemory 4d list, Time_Diff_All_Sharedmemory 3d list, J_Diff_All_Sharedmemory 3d list
+    Q_tensor = torch.tensor(Q)
+    R_tensor = torch.tensor(R)
+    P_tensor = torch.tensor(P)
     
-    CtrlManager = ControllerManager()
-    CtrlManager.add_stategy(Diff_ctrl)
-    
-    x0 = np.random.uniform(INITIAL_X_RANGE[0], INITIAL_X_RANGE[1])
-    theta0 = np.random.uniform(INITIAL_THETA_RANGE[0], INITIAL_THETA_RANGE[1])
-    theta_red_0 = ThetaToRedTheta(theta0)
-    X0_clean = np.array([x0, 0.0, theta_red_0, 0.0])
-    X0_red = np.array([x0, 0.0, theta0, 0.0, theta_red_0])
-
-    for i in range(NUM_CONTROLLER):
-        CtrlManager.set_strategy(i)
-        InferenceBy_one_method_single_IniState(0, i, U_All_SharedMemory,
-                                X0_red, X0_clean, 
-                                Q, R, P, Hor,
-                                CtrlManager)
-
-def TestAllInitialStateForOneMethod(nSelectMethod, ctrl,Q, R, P, Hor, U_All_SharedMemory):
     CtrlManager = ControllerManager()
     CtrlManager.add_stategy(ctrl)
     CtrlManager.set_strategy(0)
     
-    X0_all_clean = torch.zeros(NUM_MONTECARLO,4)
-    X0_all_red = torch.zeros(NUM_MONTECARLO,5)
-    for i in range(NUM_MONTECARLO):
-        x0 = torch.random.uniform(INITIAL_X_RANGE[0], INITIAL_X_RANGE[1])
-        theta0 = torch.random.uniform(INITIAL_THETA_RANGE[0], INITIAL_THETA_RANGE[1])
-        theta_red_0 = ThetaToRedTheta(theta0)
-        X0_clean = torch.tensor([x0, 0.0, theta_red_0, 0.0])
-        X0_red = torch.tensor([x0, 0.0, theta0, 0.0, theta_red_0])
-        X0_all_clean[i,:] = X0_clean
-        X0_all_red[i,:] = X0_red
+    x0 = INITIAL_X_RANGE[0] + (INITIAL_X_RANGE[1] - INITIAL_X_RANGE[0]) * torch.rand(nDataNum)
+    theta0 = INITIAL_THETA_RANGE[0] + (INITIAL_THETA_RANGE[1] - INITIAL_THETA_RANGE[0]) * torch.rand(nDataNum)
+    theta_red_0 = ThetaToRedTheta(theta0)
+    zero_tensor = torch.zeros(nDataNum)
+    
+    X0_all_clean = torch.stack([x0, zero_tensor, theta_red_0, zero_tensor], dim=1) #[NUM_MONTECARLO, 4]
+    X0_all_red = torch.stack([x0, zero_tensor, theta0, zero_tensor, theta_red_0], dim=1) #[NUM_MONTECARLO,5]
+
         
-    InferenceBy_one_method_All_IniState(nSelectMethod, U_All_SharedMemory,
-                                X0_all_red, X0_all_clean, 
-                                Q, R, P, Hor,
-                                CtrlManager)
+    TestDataset = nmpc_test_data.TESTGROUP_Dataset(X0_all_clean, X0_all_red)
+    Testdataloader = DataLoader(TestDataset, batch_size=GRP_SIZE, shuffle=False)
+    
+    for Grp_data, Grp_idx in Testdataloader:
+        InferenceBy_one_method_All_IniState(nSelectMethod, nGuessNum, U_All_SharedMemory, Time_Diff_All_Sharedmemory, J_Diff_All_Sharedmemory,
+                                            Grp_data, Grp_idx,
+                                            Q_tensor, R_tensor, P_tensor, Hor, CtrlManager)
 
 
 def main():
     
-    u_all_filepath = os.path.join(RESULT_SAVED_PATH,U_SOL_ALL)
-    num_multimodality_filepath = os.path.join(RESULT_SAVED_PATH,NUM_MULTI_MODALITY)
+    u_diff_all_filepath = os.path.join(RESULT_SAVED_PATH,U_SOL_DIFF_ALL)
+    u_Dis_all_filepath = os.path.join(RESULT_SAVED_PATH,U_DISTANCE_DIFF_ALL)
+    diff_num_multimodality_filepath = os.path.join(RESULT_SAVED_PATH,NUM_MULTI_MODALITY_DIFF)
+    diff_result_fig_filepath = os.path.join(RESULT_SAVED_PATH,FIG_MULTI_MODALITY_DIFF)
+    Method = {'diffusion':0, 'mpc_multiguess':0}
     if B_ISSAVE == 0:
         MAX_CORE_CPU = 2
         # MPC parameters
@@ -622,65 +593,83 @@ def main():
         # initialize controller
         Diff_ctrl = DiffusionController(DEVICE, DIFF_MODEL_PATH, DIFF_DATA_LOAD_PATH, DIFF_J_DATA_FILENAME, DIFF_U_DATA_FILENAME, DIFF_X0_CONDITION_DATA_NAME, DIFF_DATASET_CLASS) 
         MPCMulti_ctrl = MPCMultiGuessController(MPC_U_RANGE)
-        U_All_SharedMemory = list([[[[0.0 for _ in range(CONTROL_STEP)] for _ in range(NUM_FIND_MULTIMODALITY)] for _ in range(NUM_MONTECARLO)] for _ in range(NUM_CONTROLLER)])
-        TestSingleInitialStateForEachMethod(Diff_ctrl, Q, R, P, HOR, U_All_SharedMemory)
-        
-        with mp.Manager() as manager:
-            # method x group x test multimodality x control step
-            U_All_SharedMemory = manager.list([ manager.list([ manager.list([ manager.list([0.0 for _ in range(CONTROL_STEP)]) for _ in range(NUM_FIND_MULTIMODALITY)]) for _ in range(NUM_MONTECARLO)]) for _ in range(NUM_CONTROLLER)])
-            Num_Multimodaity_SharedMemory = manager.list([[[0.0 for _ in range(CONTROL_STEP)] for _ in range(NUM_MONTECARLO)] for _ in range(NUM_CONTROLLER)])
-            
-            # test
-            
-            
-            ArgList = []
-            
-            CtrlManager = ControllerManager()
-            CtrlManager.add_stategy(Diff_ctrl)
-            CtrlManager.set_strategy(0)
-            for i in range(N_GPU):
-                for j in range(int(NUM_MONTECARLO/N_GPU)):
-                    ArgList.append()
-            
-            for i in range(NUM_CONTROLLER):
-                CtrlManager = ControllerManager()
-                CtrlManager.add_stategy(Diff_ctrl)
-                CtrlManager.set_strategy(i)
-                for j in range(0,NUM_MONTECARLO):
-                    x0 = np.random.uniform(INITIAL_X_RANGE[0], INITIAL_X_RANGE[1])
-                    theta0 = np.random.uniform(INITIAL_THETA_RANGE[0], INITIAL_THETA_RANGE[1])
-                    theta_red_0 = ThetaToRedTheta(theta0)
-                    X0_clean = np.array([x0, 0.0, theta_red_0, 0.0])
-                    X0_red = np.array([x0, 0.0, theta0, 0.0, theta_red_0])
-                    ArgList.append((j, i, U_All_SharedMemory,
-                                    X0_red, X0_clean, 
-                                    Q, R, P, HOR,
-                                    CtrlManager, N_GPU))
-            mp.spawn(RunTaskForEachGPU, ArgList, nprocs=N_GPU, join=True)
-            
-            
-            U_all = np.array(U_All_SharedMemory)
-            np.save(u_all_filepath, U_all)
-            u_test = np.load(u_all_filepath)
-            print("test finish")
-            
-    
-    # if B_ISSAVE == 1:
-    #     j_all = np.load(j_all_filepath)
-    #     j_mean = np.load(j_mean_filepath)
-    #     j_std = np.load(j_std_filepath)
-    #     time_all = np.load(time_all_filepath)
-    #     time_mean = np.load(time_mean_filepath)
-    #     time_std = np.load(time_std_filepath)
-    #     print("j_all.shape:",j_all.shape)
-    #     print("j_mean.shape:",j_mean.shape)
-    #     print("j_std.shape:",j_std.shape)
-    #     print("time_all.shape:",time_all.shape)
-    #     print("time_mean.shape:",time_mean.shape)
-    #     print("time_std.shape:",time_std.shape)
-        
+        U_Diff_All_SharedMemory = list([[[[0.0 for _ in range(CONTROL_STEP)] for _ in range(NUM_FIND_MULTIMODALITY)] for _ in range(NUM_MONTECARLO)] for _ in range(NUM_CONTROLLER)])
+        Time_Diff_All_Sharedmemory = list([[[0.0 for _ in range(CONTROL_STEP)] for _ in range(NUM_MONTECARLO)] for _ in range(NUM_CONTROLLER)])
+        J_Diff_All_Sharedmemory = list([[[0.0 for _ in range(CONTROL_STEP)] for _ in range(NUM_MONTECARLO)] for _ in range(NUM_CONTROLLER)])
+        TestMultiModalityForDiff(NUM_MONTECARLO, Method['diffusion'],NUM_FIND_MULTIMODALITY, Diff_ctrl, Q, R, P, HOR, U_Diff_All_SharedMemory, Time_Diff_All_Sharedmemory, J_Diff_All_Sharedmemory)
+
+        # U_diff_all: [nMethod, grp, multimodality test, ctrl_step]      
+        U_diff_all = np.array(U_Diff_All_SharedMemory)
+        print("save data, data.shape=",U_diff_all.shape)         
+        np.save(u_diff_all_filepath, U_diff_all)
+        print("inference finish")
+                
+    elif B_ISSAVE == 1:
+        U_diff_all = np.load(u_diff_all_filepath)
+        print("load data:",U_diff_all.shape)
         
     
+    
+    ####################################Plot############################################################################
+    # diffusion
+    U_Distance_Diff_all = np.zeros((NUM_MONTECARLO, CONTROL_STEP))
+    NUM_diff_all = np.zeros((NUM_MONTECARLO, CONTROL_STEP))
+    
+    for i in range(NUM_MONTECARLO):
+        for j in range(CONTROL_STEP):
+            u_distance = max(U_diff_all[0,i,:,j]) - min(U_diff_all[0,i,:,j])
+            U_Distance_Diff_all[i][j] = u_distance
+            if(u_distance>U_THRESHOLD_MULTIMODAILTY):
+                NUM_diff_all[i][j] = 1
+            else:
+                NUM_diff_all[i][j] = 0
+                
+    np.save(u_Dis_all_filepath, U_Distance_Diff_all)
+    np.save(diff_num_multimodality_filepath, NUM_diff_all)
+    
+    
+    step = list(range(CONTROL_STEP))  # Generates a sequence from 0 to CONTROL_STEP-1
+    dark_color_1 = 'tab:blue'
+    lightcolor_1 = 'lightsteelblue'
+    dark_color_2 = 'darkorange'
+    
+    u_distance_mean = np.zeros(CONTROL_STEP)
+    u_distance_std = np.zeros(CONTROL_STEP)
+    ptg_multimodality = np.zeros(CONTROL_STEP)
+    for i in range(CONTROL_STEP):
+        u_distance_mean[i] = np.mean(U_Distance_Diff_all[:,i])
+        u_distance_std[i] = np.std(U_Distance_Diff_all[:,i])
+        ptg_multimodality[i] = np.mean(NUM_diff_all[:,i]) * 100
+    
+    u_min = np.clip(u_distance_mean - u_distance_std, a_min=0, a_max=None)
+    u_max = u_distance_mean + u_distance_std
+    multi_modality_total_ptg = np.sum(NUM_diff_all)*100/CONTROL_STEP/NUM_MONTECARLO
+    plt.figure(figsize=(30, 10))
+    plt.subplot(2,1,1)
+    plt.boxplot(U_Distance_Diff_all, positions=step, widths=0.5)
+    plt.grid(True)
+        
+    plt.plot(step, u_distance_mean, color=dark_color_1)
+    plt.fill_between(step, u_min, u_max, color=lightcolor_1, alpha=0.5)
+
+    # Plot min and max as lines
+    plt.plot(step, u_min, color=dark_color_1, linestyle='--')
+    plt.plot(step, u_max, color=dark_color_1, linestyle='--')
+    plt.xlabel('ctrl_step')
+    plt.ylabel('u_difference')
+    
+    plt.subplot(2,1,2)
+    plt.plot(step, ptg_multimodality, color=dark_color_2)
+    plt.xlabel('ctrl_step')
+    plt.ylabel('multi-modality percentage')
+    plt.text(42, 90, 'total percentage of multi-modality:'+str(multi_modality_total_ptg), fontsize=12, color='black')
+    
+    plt.savefig(diff_result_fig_filepath)
+    
+    print('multi_modality_total_ptg for all trajectory and initial state:',multi_modality_total_ptg)
+    
+    
+    # diffusion
 
 if __name__ == '__main__':
     # multiprocessing.set_start_method("spawn")
